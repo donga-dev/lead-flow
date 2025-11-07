@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Filter, Check } from "lucide-react";
 import whatsappAPI from "../../services/whatsapp.api";
 import { useSocket } from "../../contexts/SocketContext";
@@ -14,38 +14,94 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
 
   const { socket } = useSocket();
 
+  // Prevent duplicate API calls (React StrictMode causes double renders in dev)
+  const loadingRef = useRef(false);
+  const requestCacheRef = useRef(new Map());
+
   const loadMessagesForContact = useCallback(async (phoneNumber) => {
     try {
       const backendUrl =
         process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
       const normalizedPhone = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
 
-      // Try backend first
-      try {
-        const response = await fetch(
-          `${backendUrl}/api/messages/${encodeURIComponent(normalizedPhone)}`,
-          {
-            headers: {
-              "ngrok-skip-browser-warning": "true",
-            },
-          }
-        );
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.messages) {
-            return data.messages;
-          }
+      // Check if there's already a pending request for this phone number
+      if (requestCacheRef.current.has(normalizedPhone)) {
+        const cachedRequest = requestCacheRef.current.get(normalizedPhone);
+        // If it's a promise (ongoing request), return it
+        if (cachedRequest instanceof Promise) {
+          return await cachedRequest;
         }
-      } catch (backendError) {
-        // Fall back to localStorage
+        // If it's cached data, return it
+        return cachedRequest;
       }
 
-      // Fall back to localStorage
-      const storedMessages = localStorage.getItem(`whatsapp_messages_${normalizedPhone}`);
-      if (storedMessages) {
-        return JSON.parse(storedMessages);
-      }
-      return [];
+      // Create the request promise
+      const requestPromise = (async () => {
+        try {
+          // Try backend first
+          try {
+            const encodedPhone = encodeURIComponent(normalizedPhone);
+            const response = await fetch(`${backendUrl}/api/messages/${encodedPhone}`, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "ngrok-skip-browser-warning": "true",
+              },
+              mode: "cors",
+              credentials: "omit",
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              if (data.success && data.messages) {
+                // Cache the result
+                requestCacheRef.current.set(normalizedPhone, data.messages);
+                return data.messages;
+              }
+            } else if (!response.ok) {
+              console.warn(
+                `Failed to load messages for ${normalizedPhone}: ${response.status} ${response.statusText}`
+              );
+            }
+          } catch (backendError) {
+            // Log CORS and network errors for debugging
+            if (
+              backendError.name === "TypeError" &&
+              backendError.message.includes("Failed to fetch")
+            ) {
+              console.warn(
+                `CORS or network error loading messages for ${normalizedPhone}:`,
+                backendError.message
+              );
+            } else {
+              console.warn(`Error loading messages for ${normalizedPhone}:`, backendError);
+            }
+          }
+
+          // Fall back to localStorage
+          const storedMessages = localStorage.getItem(`whatsapp_messages_${normalizedPhone}`);
+          if (storedMessages) {
+            const parsed = JSON.parse(storedMessages);
+            // Cache the result
+            requestCacheRef.current.set(normalizedPhone, parsed);
+            return parsed;
+          }
+
+          // Cache empty result
+          requestCacheRef.current.set(normalizedPhone, []);
+          return [];
+        } finally {
+          // Remove the promise from cache after completion
+          const cached = requestCacheRef.current.get(normalizedPhone);
+          if (cached instanceof Promise) {
+            requestCacheRef.current.delete(normalizedPhone);
+          }
+        }
+      })();
+
+      // Store the promise to prevent duplicate calls
+      requestCacheRef.current.set(normalizedPhone, requestPromise);
+      return await requestPromise;
     } catch (error) {
       console.warn("Error loading messages for contact:", error);
       return [];
@@ -53,18 +109,37 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
   }, []);
 
   const loadContacts = useCallback(async () => {
+    // Prevent duplicate calls (React StrictMode in dev causes double renders)
+    if (loadingRef.current) {
+      console.log("loadContacts already in progress, skipping duplicate call");
+      return;
+    }
+
+    loadingRef.current = true;
     setLoading(true);
     setError(null);
+
     try {
       const contactsData = await whatsappAPI.getContacts();
       setContacts(contactsData);
 
       // Calculate unread counts for each contact
+      // Add delay between requests to avoid CORS issues with rapid requests
       const counts = {};
-      for (const contact of contactsData) {
+      for (let i = 0; i < contactsData.length; i++) {
+        const contact = contactsData[i];
         if (contact.hasMessages) {
-          const messages = await loadMessagesForContact(contact.phoneNumber);
-          counts[contact.phoneNumber] = getUnreadCount(contact.phoneNumber, messages);
+          // Add a small delay between requests to avoid overwhelming the server/CORS
+          if (i > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          try {
+            const messages = await loadMessagesForContact(contact.phoneNumber);
+            counts[contact.phoneNumber] = getUnreadCount(contact.phoneNumber, messages);
+          } catch (err) {
+            console.warn(`Failed to load messages for ${contact.phoneNumber}:`, err);
+            counts[contact.phoneNumber] = 0;
+          }
         } else {
           counts[contact.phoneNumber] = 0;
         }
@@ -75,11 +150,19 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
       console.error("Error loading contacts:", err);
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
   }, [loadMessagesForContact]);
 
   useEffect(() => {
-    loadContacts();
+    // Use a small timeout to debounce and prevent immediate duplicate calls
+    const timeoutId = setTimeout(() => {
+      loadContacts();
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
   }, [loadContacts]);
 
   // Update unread count when a contact is selected

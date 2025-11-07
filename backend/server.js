@@ -273,73 +273,153 @@ app.post("/webhook", (req, res) => {
 
 // Get all messages for a specific contact
 app.get("/api/messages/:phoneNumber", (req, res) => {
-  const phoneNumber = req.params.phoneNumber;
-  const normalized = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
+  try {
+    // Set CORS headers explicitly
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 
-  const messages = messagesStore.get(normalized) || [];
+    // Decode URL-encoded phone number (e.g., %2B917359275948 -> +917359275948)
+    let phoneNumber = req.params.phoneNumber;
+    try {
+      // Express auto-decodes, but handle edge cases where it might still be encoded
+      if (phoneNumber.includes("%")) {
+        phoneNumber = decodeURIComponent(phoneNumber);
+      }
+    } catch (decodeError) {
+      console.warn("Failed to decode phone number:", decodeError);
+    }
 
-  // Sort by timestamp (oldest first)
-  const sortedMessages = [...messages].sort((a, b) => a.timestamp - b.timestamp);
+    // Normalize phone number consistently
+    const normalized = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
 
-  res.json({
-    success: true,
-    phoneNumber: normalized,
-    messages: sortedMessages,
-    count: sortedMessages.length,
-  });
+    // Validate phone number
+    if (!normalized || normalized.length < 3 || normalized === "+") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid phone number",
+        received: req.params.phoneNumber,
+        normalized: normalized,
+      });
+    }
+
+    const messages = messagesStore.get(normalized) || [];
+
+    // Sort by timestamp (oldest first)
+    const sortedMessages = [...messages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    res.json({
+      success: true,
+      phoneNumber: normalized,
+      messages: sortedMessages,
+      count: sortedMessages.length,
+    });
+  } catch (error) {
+    console.error("Error in /api/messages/:phoneNumber:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error",
+      message: error.message,
+    });
+  }
 });
 
 // Get all contacts with messages
 app.get("/api/contacts", (req, res) => {
-  const contacts = [];
+  try {
+    // Set CORS headers explicitly
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 
-  messagesStore.forEach((messages, phoneNumber) => {
-    // Find name from any message's profile (prefer most recent message with profile)
-    let contactName = phoneNumber;
-    let lastMessage = null;
-    let lastTimestamp = 0;
+    const contacts = [];
 
-    // Search through messages to find name and get the last message
-    // Iterate backwards to get the most recent name first
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
+    messagesStore.forEach((messages, phoneNumber) => {
+      try {
+        // Validate phone number
+        if (!phoneNumber || typeof phoneNumber !== "string") {
+          return; // Skip invalid phone numbers
+        }
 
-      // Get name from profile if available (use first one found when iterating backwards = most recent)
-      if (msg.profile?.name && contactName === phoneNumber) {
-        contactName = msg.profile.name;
+        // Validate messages array
+        if (!Array.isArray(messages)) {
+          return; // Skip invalid message arrays
+        }
+
+        // Find name from any message's profile (prefer most recent message with profile)
+        let contactName = phoneNumber;
+        let lastMessage = null;
+        let lastTimestamp = 0;
+
+        // Search through messages to find name and get the last message
+        // Iterate backwards to get the most recent name first
+        for (let i = messages.length - 1; i >= 0; i--) {
+          try {
+            const msg = messages[i];
+
+            // Skip invalid messages
+            if (!msg || typeof msg !== "object") {
+              continue;
+            }
+
+            // Get name from profile if available (use first one found when iterating backwards = most recent)
+            if (msg.profile?.name && contactName === phoneNumber) {
+              contactName = msg.profile.name;
+            }
+
+            // Track the most recent message by timestamp
+            if (msg.timestamp && msg.timestamp > lastTimestamp) {
+              lastTimestamp = msg.timestamp;
+              lastMessage = msg;
+            }
+          } catch (msgError) {
+            // Continue with next message if this one fails
+            continue;
+          }
+        }
+
+        // If no last message found by timestamp, use the last message in array
+        if (!lastMessage && messages.length > 0) {
+          // Find first valid message
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i] && typeof messages[i] === "object") {
+              lastMessage = messages[i];
+              break;
+            }
+          }
+        }
+
+        // Include contact even if there are no messages (name will be phoneNumber)
+        contacts.push({
+          phoneNumber: phoneNumber,
+          name: contactName, // Will be phoneNumber if no profile name found in any message
+          hasMessages: messages.length > 0,
+          lastMessage: lastMessage?.text?.body || "",
+          timestamp: lastMessage?.timestamp || 0,
+          messageCount: messages.length,
+        });
+      } catch (contactError) {
+        // Log error but continue processing other contacts
+        console.warn(`Error processing contact ${phoneNumber}:`, contactError);
       }
-
-      // Track the most recent message by timestamp
-      if (msg.timestamp && msg.timestamp > lastTimestamp) {
-        lastTimestamp = msg.timestamp;
-        lastMessage = msg;
-      }
-    }
-
-    // If no last message found by timestamp, use the last message in array
-    if (!lastMessage && messages.length > 0) {
-      lastMessage = messages[messages.length - 1];
-    }
-
-    // Include contact even if there are no messages (name will be phoneNumber)
-    contacts.push({
-      phoneNumber: phoneNumber,
-      name: contactName, // Will be phoneNumber if no profile name found in any message
-      hasMessages: messages.length > 0,
-      lastMessage: lastMessage?.text?.body || "",
-      timestamp: lastMessage?.timestamp || 0,
-      messageCount: messages.length,
     });
-  });
 
-  // Sort by most recent message
-  contacts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    // Sort by most recent message
+    contacts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-  res.json({
-    success: true,
-    contacts: contacts,
-    count: contacts.length,
-  });
+    res.json({
+      success: true,
+      contacts: contacts,
+      count: contacts.length,
+    });
+  } catch (error) {
+    console.error("Error in /api/contacts:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error",
+      message: error.message,
+    });
+  }
 });
 
 // Get new messages (for polling)

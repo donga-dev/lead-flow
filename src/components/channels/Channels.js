@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
 import {
   Check,
@@ -14,13 +14,14 @@ import WhatsAppConnectModal from "./WhatsAppConnectModal";
 
 const Channels = () => {
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(true);
 
   const [channels, setChannels] = useState([
     {
       id: "whatsapp",
       name: "Whatsapp",
       subtitle: "WhatsApp Business API",
-      connected: true,
+      connected: false, // Start as disconnected, verify on mount
       leads: 45,
       lastSync: "1/18/2025",
       logo: (
@@ -77,6 +78,63 @@ const Channels = () => {
   };
 
   const whatsappChannel = channels.find((c) => c.id === "whatsapp");
+
+  // Verify WhatsApp connection status on component mount
+  useEffect(() => {
+    const verifyWhatsAppConnection = async () => {
+      setCheckingConnection(true);
+      const storedToken = localStorage.getItem("whatsapp_token");
+
+      if (!storedToken) {
+        // No token found, ensure channel is disconnected
+        setChannels((prev) =>
+          prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
+        );
+        setCheckingConnection(false);
+        return;
+      }
+
+      // Verify token validity
+      try {
+        const backendUrl =
+          process.env.REACT_APP_BACKEND_URL ||
+          "https://unexigent-felisha-calathiform.ngrok-free.dev";
+        const response = await fetch(`${backendUrl}/api/verify-whatsapp-token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
+          body: JSON.stringify({ token: storedToken }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          // Token is valid, mark as connected
+          setChannels((prev) =>
+            prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: true } : ch))
+          );
+        } else {
+          // Token is invalid, remove it and mark as disconnected
+          localStorage.removeItem("whatsapp_token");
+          setChannels((prev) =>
+            prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
+          );
+        }
+      } catch (error) {
+        console.error("Error verifying WhatsApp token on mount:", error);
+        // On error, mark as disconnected but keep token (might be network issue)
+        setChannels((prev) =>
+          prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
+        );
+      } finally {
+        setCheckingConnection(false);
+      }
+    };
+
+    verifyWhatsAppConnection();
+  }, []); // Run only on mount
 
   const handleConnect = (channelId) => {
     if (channelId === "whatsapp") {
@@ -233,13 +291,24 @@ const Channels = () => {
                   </div>
                   <div
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold flex-shrink-0 flex items-center ${
-                      whatsappChannel.connected
+                      checkingConnection
+                        ? "bg-slate-500/20 text-slate-400"
+                        : whatsappChannel.connected
                         ? "bg-green-500/20 text-green-500"
                         : "bg-red-500/20 text-red-500"
                     }`}
                   >
-                    <Check className="w-3 h-3 mr-1" />
-                    {whatsappChannel.connected ? "Connected" : "Disconnected"}
+                    {checkingConnection ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                        Checking...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-3 h-3 mr-1" />
+                        {whatsappChannel.connected ? "Connected" : "Disconnected"}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-6 mb-5 flex-wrap">

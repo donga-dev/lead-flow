@@ -11,6 +11,8 @@ class WhatsAppAPI {
     this.phoneNumberId = API_CONFIG.PHONE_NUMBER_ID;
     this.whatsappBusinessAccountId = API_CONFIG.WHATSAPP_BUSINESS_ACCOUNT_ID;
     this.accessToken = API_CONFIG.ACCESS_TOKEN;
+    // Cache for ongoing requests to prevent duplicates
+    this.requestCache = new Map();
   }
 
   /**
@@ -185,7 +187,9 @@ class WhatsAppAPI {
       return data;
     } catch (error) {
       console.error("Error sending message:", error);
-      toast.error(error.message, { autoClose: 5000 });
+      toast.error("WhatsApp not connected. Please Connect to WhatsApp from the Channels page", {
+        autoClose: 5000,
+      });
       return null;
     }
   }
@@ -249,37 +253,83 @@ class WhatsAppAPI {
       const contactsMap = new Map();
 
       // 1. Try to get contacts from backend API first
-      try {
-        const backendUrl =
-          process.env.REACT_APP_BACKEND_URL ||
-          "https://unexigent-felisha-calathiform.ngrok-free.dev";
-        const response = await fetch(`${backendUrl}/api/contacts`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
-          },
-        });
+      // Prevent duplicate requests
+      const cacheKey = "getIncomingMessageContacts_api";
+      let apiContacts = [];
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.contacts) {
-            data.contacts.forEach((contact) => {
-              const normalized = contact.phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
-              contactsMap.set(normalized, {
-                phoneNumber: normalized,
-                name: contact.name || normalized,
-                hasMessages: true,
-                lastMessage: contact.lastMessage || "",
-                timestamp: contact.timestamp || Date.now(),
-                messageType: "backend",
-              });
-            });
+      if (this.requestCache.has(cacheKey)) {
+        const cachedRequest = this.requestCache.get(cacheKey);
+        if (cachedRequest instanceof Promise) {
+          // If there's an ongoing request, wait for it
+          try {
+            apiContacts = await cachedRequest;
+          } catch (error) {
+            // If cached request failed, continue with new request
+            this.requestCache.delete(cacheKey);
           }
+        } else {
+          // Cached result
+          apiContacts = cachedRequest;
         }
-      } catch (error) {
-        console.warn("Backend not available, using localStorage:", error);
       }
+
+      // Create the request promise if not cached
+      if (!this.requestCache.has(cacheKey)) {
+        const requestPromise = (async () => {
+          try {
+            const backendUrl =
+              process.env.REACT_APP_BACKEND_URL ||
+              "https://unexigent-felisha-calathiform.ngrok-free.dev";
+            const response = await fetch(`${backendUrl}/api/contacts`, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "ngrok-skip-browser-warning": "true",
+              },
+              mode: "cors",
+              credentials: "omit",
+            });
+
+            const contacts = [];
+            if (response.ok) {
+              const data = await response.json();
+              if (data.success && data.contacts) {
+                data.contacts.forEach((contact) => {
+                  const normalized = contact.phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
+                  contacts.push({
+                    phoneNumber: normalized,
+                    name: contact.name || normalized,
+                    hasMessages: true,
+                    lastMessage: contact.lastMessage || "",
+                    timestamp: contact.timestamp || Date.now(),
+                    messageType: "backend",
+                  });
+                });
+              }
+            } else {
+              console.warn(`Failed to fetch contacts: ${response.status} ${response.statusText}`);
+            }
+            return contacts;
+          } catch (error) {
+            console.warn("Backend not available, using localStorage:", error);
+            return []; // Return empty array on error
+          } finally {
+            // Remove from cache after completion
+            this.requestCache.delete(cacheKey);
+          }
+        })();
+
+        // Store the promise to prevent duplicate calls
+        this.requestCache.set(cacheKey, requestPromise);
+
+        // Wait for the request and get the result
+        apiContacts = await requestPromise;
+      }
+
+      // Add API contacts to the map
+      apiContacts.forEach((contact) => {
+        contactsMap.set(contact.phoneNumber, contact);
+      });
 
       // 2. Get stored incoming messages from localStorage (from webhooks)
       try {
