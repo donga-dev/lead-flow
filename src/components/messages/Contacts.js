@@ -1,25 +1,30 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Filter, Check } from "lucide-react";
+import { Filter, Plus } from "lucide-react";
 import whatsappAPI from "../../services/whatsapp.api";
 import { useSocket } from "../../contexts/SocketContext";
 import { getUnreadCount } from "../../utils/readMessages.utils";
+import AddContactModal from "./AddContactModal";
 
-const Contacts = ({ onSelectContact, selectedContact }) => {
+const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onContactsLoaded }) => {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filter, setFilter] = useState("all");
   const [unreadCounts, setUnreadCounts] = useState({});
-
+  const [openAddContactModal, setOpenAddContactModal] = useState(false);
   const { socket } = useSocket();
 
   // Prevent duplicate API calls (React StrictMode causes double renders in dev)
   const loadingRef = useRef(false);
   const requestCacheRef = useRef(new Map());
 
+  const token = localStorage.getItem("whatsapp_token");
   const loadMessagesForContact = useCallback(async (phoneNumber) => {
     try {
+      if (!token) {
+        return;
+      }
       const backendUrl =
         process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
       const normalizedPhone = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
@@ -109,6 +114,10 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
   }, []);
 
   const loadContacts = useCallback(async () => {
+    if (!token) {
+      setSelectedContact(null);
+      return;
+    }
     // Prevent duplicate calls (React StrictMode in dev causes double renders)
     if (loadingRef.current) {
       console.log("loadContacts already in progress, skipping duplicate call");
@@ -122,6 +131,10 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
     try {
       const contactsData = await whatsappAPI.getContacts();
       setContacts(contactsData);
+      // Notify parent component of loaded contacts
+      if (onContactsLoaded) {
+        onContactsLoaded(contactsData);
+      }
 
       // Calculate unread counts for each contact
       // Add delay between requests to avoid CORS issues with rapid requests
@@ -194,25 +207,35 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
   useEffect(() => {
     if (!socket) return;
 
-    const handleContactUpdate = () => {
-      loadContacts();
+    const handleContactUpdate = async () => {
+      try {
+        // Add a small delay to prevent rapid API calls
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await loadContacts();
+      } catch (error) {
+        console.error("Error in handleContactUpdate:", error);
+      }
     };
 
     const handleNewMessage = async (data) => {
-      // Reload contacts and update unread count for the specific contact
-      const contactsData = await whatsappAPI.getContacts();
-      setContacts(contactsData);
+      try {
+        // Reload contacts and update unread count for the specific contact
+        const contactsData = await whatsappAPI.getContacts();
+        setContacts(contactsData);
 
-      // Update unread count for the contact that received the message
-      // Handle different socket event structures
-      const phoneNumber = data.phoneNumber || data.message?.from || data.from;
-      if (phoneNumber) {
-        const normalizedPhone = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
-        const messages = await loadMessagesForContact(normalizedPhone);
-        setUnreadCounts((prev) => ({
-          ...prev,
-          [normalizedPhone]: getUnreadCount(normalizedPhone, messages),
-        }));
+        // Update unread count for the contact that received the message
+        // Handle different socket event structures
+        const phoneNumber = data.phoneNumber || data.message?.from || data.from;
+        if (phoneNumber) {
+          const normalizedPhone = phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
+          const messages = await loadMessagesForContact(normalizedPhone);
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [normalizedPhone]: getUnreadCount(normalizedPhone, messages),
+          }));
+        }
+      } catch (error) {
+        console.error("Error in handleNewMessage:", error);
       }
     };
 
@@ -290,18 +313,17 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
     if (days < 7) return `${days}d ago`;
     return date.toLocaleDateString();
   };
-
   return (
     <div className="flex flex-col h-full bg-slate-800">
       <div className="flex items-center justify-between p-6 bg-slate-800 border-b border-slate-700">
         <Filter className="w-5 h-5 text-white cursor-pointer" />
-        <div className="flex items-center gap-2 text-white">
-          <span>Assigned to me</span>
-          <input
-            type="checkbox"
-            className="w-4 h-4 cursor-pointer"
-            defaultChecked
-          />
+        <div
+          className="cursor-pointer hover:bg-slate-700 rounded-lg p-2 transition-all duration-300"
+          onClick={() => {
+            setOpenAddContactModal(true);
+          }}
+        >
+          <Plus className="w-5 h-5 text-white" />
         </div>
       </div>
 
@@ -318,7 +340,12 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
       {loading && <div className="p-5 text-center text-slate-400">Loading contacts...</div>}
 
       <div className="flex-1 overflow-y-auto bg-slate-800">
-        {filteredContacts.length === 0 && !loading ? (
+        {!token ? (
+          <p className="p-5 text-center text-slate-400 flex items-center h-full">
+            WhatsApp not connected. Please Connect to WhatsApp from the Channels page to see
+            contacts
+          </p>
+        ) : filteredContacts.length === 0 && !loading ? (
           <div className="p-10 text-center text-slate-400">
             <p className="m-0 mb-2 text-base text-slate-100">No contacts found</p>
             <small className="text-sm">
@@ -394,6 +421,7 @@ const Contacts = ({ onSelectContact, selectedContact }) => {
           })
         )}
       </div>
+      {openAddContactModal && <AddContactModal onClose={() => setOpenAddContactModal(false)} />}
     </div>
   );
 };

@@ -228,6 +228,17 @@ const Channels = () => {
     }
   };
 
+  if (checkingConnection) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[#111827] h-full">
+        <div className="text-center text-slate-400 p-10">
+          <RefreshCw className="w-16 h-16 animate-spin mx-auto" />
+          <p className="text-sm text-slate-400 mt-4 mb-0">Checking connection...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="flex-1 flex flex-col bg-[#111827] h-full">

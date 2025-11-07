@@ -317,12 +317,18 @@ class WhatsAppAPI {
                 });
               }
             } else {
-              console.warn(`Failed to fetch contacts: ${response.status} ${response.statusText}`);
+              const errorText = await response.text();
+              console.error(
+                `Failed to fetch contacts: ${response.status} ${response.statusText}`,
+                errorText
+              );
+              throw new Error(`API returned ${response.status}: ${response.statusText}`);
             }
             return contacts;
           } catch (error) {
-            console.warn("Backend not available, using localStorage:", error);
-            return []; // Return empty array on error
+            console.error("Error fetching contacts from backend:", error);
+            // Don't throw - return empty array to prevent breaking the app
+            return [];
           } finally {
             // Remove from cache after completion
             this.requestCache.delete(cacheKey);

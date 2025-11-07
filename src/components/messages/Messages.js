@@ -1,24 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   Mic,
   Paperclip,
   Send,
   Smile,
-  Users,
-  FileText,
-  Clock,
-  X,
   FileUser,
   NotebookPen,
   Bell,
   CircleX,
+  MessageSquare,
 } from "lucide-react";
 import whatsappAPI from "../../services/whatsapp.api";
 import { useSocket } from "../../contexts/SocketContext";
 import { API_CONFIG } from "../../config/api.config";
 import { markMessagesAsRead } from "../../utils/readMessages.utils";
+import Contacts from "./Contacts";
 
-const Messages = ({ selectedContact, onSendMessage }) => {
+const Messages = ({ onSendMessage }) => {
+  const { contactId } = useParams();
+  const navigate = useNavigate();
+  const [selectedContact, setSelectedContact] = useState(null);
+  const [contacts, setContacts] = useState([]);
   const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -31,11 +34,33 @@ const Messages = ({ selectedContact, onSendMessage }) => {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
 
-  // Suggested quick replies
-  const suggestedReplies = [
-    "Hi there! How can I help you today?",
-    "Hi! I'm here to answer your questions and help you find what you need.",
-  ];
+  // Sync selected contact with URL and contacts list
+  useEffect(() => {
+    if (contactId) {
+      const decodedPhone = decodeURIComponent(contactId);
+      // Find contact in the contacts list
+      const contact = contacts.find(
+        (c) =>
+          c.phoneNumber === decodedPhone ||
+          c.phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+") ===
+            decodedPhone.replace(/\s/g, "").replace(/^\+?/, "+")
+      );
+      if (contact) {
+        setSelectedContact(contact);
+      } else {
+        // If contact not found in list, create a minimal contact object
+        setSelectedContact({ phoneNumber: decodedPhone });
+      }
+    } else {
+      setSelectedContact(null);
+    }
+  }, [contactId, contacts]);
+
+  const handleContactSelect = (contact) => {
+    const encodedPhone = encodeURIComponent(contact.phoneNumber);
+    navigate(`/messages/${encodedPhone}`);
+    setSelectedContact(contact);
+  };
 
   const loadMessages = useCallback(async () => {
     if (!selectedContact) {
@@ -442,19 +467,93 @@ const Messages = ({ selectedContact, onSendMessage }) => {
     }
   };
 
-  if (!selectedContact) {
-    return (
-      <div className="flex flex-col h-full bg-slate-900 justify-center items-center">
-        <div className="text-center text-slate-400 p-10">
-          <div className="text-6xl mb-4">💬</div>
-          <p className="text-lg font-medium m-0 mb-2 text-slate-100">
-            Select a contact to view messages
-          </p>
-          <small className="text-sm">Choose a contact from the sidebar to start chatting</small>
-        </div>
+  return (
+    <div className="flex h-full w-full md:p-6 p-0 bg-[#111827]">
+      <div className="w-[300px] min-w-[300px] max-w-[500px] border-r border-slate-700 flex flex-col overflow-hidden bg-slate-800">
+        <Contacts
+          onSelectContact={handleContactSelect}
+          selectedContact={selectedContact}
+          setSelectedContact={setSelectedContact}
+          onContactsLoaded={setContacts}
+        />
       </div>
-    );
-  }
+      <div className="flex-1 flex flex-col overflow-hidden bg-slate-900">
+        {selectedContact ? (
+          <MessagesContent
+            selectedContact={selectedContact}
+            onSendMessage={onSendMessage}
+            messages={messages}
+            setMessages={setMessages}
+            loading={loading}
+            error={error}
+            newMessage={newMessage}
+            setNewMessage={setNewMessage}
+            messageType={messageType}
+            setMessageType={setMessageType}
+            templateName={templateName}
+            setTemplateName={setTemplateName}
+            templates={templates}
+            loadingTemplates={loadingTemplates}
+            sending={sending}
+            setSending={setSending}
+            messagesEndRef={messagesEndRef}
+            socket={socket}
+            formatPhoneNumber={formatPhoneNumber}
+            formatTime={formatTime}
+            formatDate={formatDate}
+            getMessageAvatar={getMessageAvatar}
+            handleSend={handleSend}
+            handleSuggestedReply={handleSuggestedReply}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center bg-slate-900">
+            <div className="text-center text-slate-400 p-10">
+              <div className="w-[120px] h-[120px] mx-auto mb-6 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 rounded-full flex items-center justify-center">
+                <MessageSquare className="w-20 h-20 text-purple-500 opacity-80" />
+              </div>
+              <h3 className="text-2xl font-semibold m-0 mb-2 text-slate-100">
+                Welcome to LeadFlow Chat
+              </h3>
+              <p className="text-sm m-0">Select a conversation to start chatting</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Messages Content Component (the actual messages UI)
+const MessagesContent = ({
+  selectedContact,
+  onSendMessage,
+  messages,
+  setMessages,
+  loading,
+  error,
+  newMessage,
+  setNewMessage,
+  messageType,
+  setMessageType,
+  templateName,
+  setTemplateName,
+  templates,
+  loadingTemplates,
+  sending,
+  setSending,
+  messagesEndRef,
+  socket,
+  formatPhoneNumber,
+  formatTime,
+  formatDate,
+  getMessageAvatar,
+  handleSend,
+  handleSuggestedReply,
+}) => {
+  const suggestedReplies = [
+    "Hi there! How can I help you today?",
+    "Hi! I'm here to answer your questions and help you find what you need.",
+  ];
 
   return (
     <div className="flex flex-col h-full bg-slate-900 bg-[url('data:image/svg+xml,%3Csvg width=\\'60\\' height=\\'60\\' viewBox=\\'0 0 60 60\\' xmlns=\\'http://www.w3.org/2000/svg\\'%3E%3Cg fill=\\'none\\' fill-rule=\\'evenodd\\'%3E%3Cg fill=\\'%23d4d4d4\\' fill-opacity=\\'0.03\\'%3E%3Cpath d=\\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')]">

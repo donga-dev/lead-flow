@@ -11,50 +11,59 @@ import {
   X,
 } from "lucide-react";
 import React from "react";
+import { NavLink, useLocation } from "react-router-dom";
 
-const Sidebar = ({ activeView, onViewChange, isOpen, onClose }) => {
+const Sidebar = ({ isOpen, onClose }) => {
+  const location = useLocation();
   const navItems = [
     {
-      id: "dashboard",
+      path: "/dashboard",
       label: "Dashboard",
       icon: <LayoutDashboard className="w-5 h-5" />,
     },
     {
-      id: "messages",
+      path: "/messages",
       label: "Messages",
       icon: <MessageCircle className="w-5 h-5" />,
     },
     {
-      id: "leads",
+      path: "/leads",
       label: "Leads",
       icon: <FileUser className="w-5 h-5" />,
     },
     {
-      id: "contacts",
+      path: "/contacts",
       label: "Contacts",
       icon: <Users className="w-5 h-5" />,
     },
     {
-      id: "analytics",
+      path: "/analytics",
       label: "Analytics",
       icon: <ChartColumn className="w-5 h-5" />,
     },
     {
-      id: "channels",
+      path: "/channels",
       label: "Channels",
       icon: <Link className="w-5 h-5" />,
     },
     {
-      id: "reports",
+      path: "/reports",
       label: "Reports",
       icon: <FileText className="w-5 h-5" />,
     },
     {
-      id: "settings",
+      path: "/settings",
       label: "Settings",
       icon: <Settings className="w-5 h-5" />,
     },
   ];
+
+  const isActive = (path) => {
+    if (path === "/messages") {
+      return location.pathname.startsWith("/messages");
+    }
+    return location.pathname === path;
+  };
 
   return (
     <>
@@ -135,15 +144,18 @@ const Sidebar = ({ activeView, onViewChange, isOpen, onClose }) => {
         {/* Navigation Items */}
         <nav className="flex flex-col flex-1 py-3 overflow-y-auto">
           {navItems.map((item) => (
-            <button
-              key={item.id}
-              className={`relative flex items-center gap-3 px-6 py-3 cursor-pointer text-sm transition-all text-left w-full text-white ${
-                activeView === item.id
-                  ? "border-r-2 border-solid border-blue-500 bg-gray-700"
-                  : "hover:bg-gray-700"
-              }`}
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive: navIsActive }) => {
+                const active = navIsActive || isActive(item.path);
+                return `relative flex items-center gap-3 px-6 py-3 cursor-pointer text-sm transition-all text-left w-full text-white ${
+                  active
+                    ? "border-r-2 border-solid border-blue-500 bg-gray-700"
+                    : "hover:bg-gray-700"
+                }`;
+              }}
               onClick={() => {
-                onViewChange(item.id);
                 // Close sidebar on mobile after selecting an item
                 if (window.innerWidth < 1024) {
                   onClose();
@@ -152,7 +164,7 @@ const Sidebar = ({ activeView, onViewChange, isOpen, onClose }) => {
             >
               <span className="flex-shrink-0 text-[#f1f5f9]">{item.icon}</span>
               <span className="flex-1 text-[#f1f5f9] text-base font-normal">{item.label}</span>
-            </button>
+            </NavLink>
           ))}
         </nav>
 
