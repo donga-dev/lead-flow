@@ -1,0 +1,5 @@
+version: "3"
+tunnels:
+  backend:
+    addr: 3001
+    proto: http
