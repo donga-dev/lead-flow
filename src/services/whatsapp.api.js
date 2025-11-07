@@ -164,10 +164,20 @@ class WhatsAppAPI {
       // Log payload for debugging (matches curl structure exactly)
       console.log("Sending WhatsApp message with payload:", JSON.stringify(payload, null, 2));
 
+      const token = localStorage.getItem("whatsapp_token");
+      if (!token) {
+        throw new Error(
+          "WhatsApp not connected. Please Connect to WhatsApp from the Channels page"
+        );
+      }
+      const headers = this.getHeaders();
+      headers.Authorization = `Bearer ${token}`;
+      headers["Content-Type"] = "application/json";
+      headers["ngrok-skip-browser-warning"] = "true";
       // Make API call with exact headers as in curl
       const response = await fetch(url, {
         method: "POST",
-        headers: this.getHeaders(),
+        headers: headers,
         body: JSON.stringify(payload),
       });
 
@@ -480,9 +490,19 @@ class WhatsAppAPI {
     try {
       const url = `${this.baseURL}/${messageId}`;
 
+      const token = localStorage.getItem("whatsapp_token");
+      if (!token) {
+        throw new Error(
+          "WhatsApp not connected. Please Connect to WhatsApp from the Channels page"
+        );
+      }
+      const headers = this.getHeaders();
+      headers.Authorization = `Bearer ${token}`;
+      headers["Content-Type"] = "application/json";
+      headers["ngrok-skip-browser-warning"] = "true";
       const response = await fetch(url, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: headers,
       });
 
       if (!response.ok) {
