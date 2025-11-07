@@ -205,6 +205,7 @@ const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onCont
   }, [selectedContact]);
 
   useEffect(() => {
+    if (!token) return;
     if (!socket) return;
 
     const handleContactUpdate = async () => {
