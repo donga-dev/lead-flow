@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
-  Check,
   Users,
   RefreshCw,
   Clock,
@@ -9,10 +9,30 @@ import {
   Zap,
   CircleCheckBig,
   CircleX,
+  Instagram,
 } from "lucide-react";
 import WhatsAppConnectModal from "./WhatsAppConnectModal";
 
 const Channels = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Instagram OAuth credentials (using Facebook OAuth for Instagram Business API)
+  const appId = process.env.REACT_APP_FACEBOOK_APP_ID || "1599198441064709";
+  const redirectUri = process.env.REACT_APP_REDIRECT_URI || window.location.origin + "/channels";
+  // const redirectUri = process.env.REACT_APP_REDIRECT_URI || "https://prnt.sc/YhdZA0DVLFwp";
+  const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+
+  // Instagram Business API scopes (via Facebook OAuth)
+  const instagramScopes = [
+    "instagram_basic",
+    "instagram_manage_insights",
+    "instagram_manage_messages",
+    "pages_manage_metadata",
+    "pages_messaging",
+    "pages_read_engagement",
+    "pages_show_list",
+    "business_management",
+  ].join(",");
+
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(true);
 
@@ -22,7 +42,7 @@ const Channels = () => {
       name: "Whatsapp",
       subtitle: "WhatsApp Business API",
       connected: false, // Start as disconnected, verify on mount
-      leads: 45,
+      leads: "",
       lastSync: "1/18/2025",
       logo: (
         <svg
@@ -38,6 +58,15 @@ const Channels = () => {
           />
         </svg>
       ),
+    },
+    {
+      id: "instagram",
+      name: "Instagram",
+      subtitle: "Instagram Business",
+      connected: false, // Start as disconnected, verify on mount
+      leads: "",
+      lastSync: "1/18/2025",
+      logo: <Instagram className="w-8 h-8 text-pink-500" />,
     },
   ]);
 
@@ -77,82 +106,240 @@ const Channels = () => {
     lastSync: getLastSyncDate(),
   };
 
-  const whatsappChannel = channels.find((c) => c.id === "whatsapp");
-
-  // Verify WhatsApp connection status on component mount
+  // Handle Instagram OAuth callback
   useEffect(() => {
-    const verifyWhatsAppConnection = async () => {
-      setCheckingConnection(true);
-      const storedToken = localStorage.getItem("whatsapp_token");
+    const handleInstagramCallback = async () => {
+      const code = searchParams.get("code");
+      const error = searchParams.get("error");
+      const errorReason = searchParams.get("error_reason");
+      const errorDescription = searchParams.get("error_description");
 
-      if (!storedToken) {
-        // No token found, ensure channel is disconnected
-        setChannels((prev) =>
-          prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
-        );
-        setCheckingConnection(false);
+      // If no OAuth parameters, skip callback handling
+      if (!code && !error) {
         return;
       }
 
-      // Verify token validity
-      try {
-        const backendUrl =
-          process.env.REACT_APP_BACKEND_URL ||
-          "https://unexigent-felisha-calathiform.ngrok-free.dev";
-        const response = await fetch(`${backendUrl}/api/verify-whatsapp-token`, {
+      // Handle OAuth errors
+      if (error) {
+        console.error("OAuth error:", { error, errorReason, errorDescription });
+        toast.error(
+          errorDescription || errorReason || "Failed to connect Instagram. Please try again.",
+          { autoClose: 5000 }
+        );
+        // Clean up URL
+        setSearchParams({});
+        return;
+      }
+
+      // Check if we have an authorization code
+      if (code) {
+        try {
+          // Get redirect URI (should match the one used in the OAuth request)
+          const currentRedirectUri =
+            process.env.REACT_APP_REDIRECT_URI || window.location.origin + "/channels";
+
+          // Exchange code for access token via backend
+          const backendUrl =
+            process.env.REACT_APP_BACKEND_URL ||
+            "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+          const response = await fetch(`${backendUrl}/api/instagram/exchange-token`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            },
+            body: JSON.stringify({
+              code: code,
+              redirectUri: currentRedirectUri,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success && data.access_token) {
+            // Save Instagram access token (page token) to localStorage
+            localStorage.setItem("instagram_page_access_token", data.access_token);
+
+            // Save user access token if available (for /me/accounts calls)
+            if (data.user_access_token) {
+              localStorage.setItem("instagram_user_access_token", data.user_access_token);
+            }
+
+            // Also save token type and expiry if available
+            if (data.token_type) {
+              localStorage.setItem("instagram_token_type", data.token_type);
+            }
+            if (data.expires_in) {
+              // Calculate expiry timestamp
+              const expiryTime = Date.now() + data.expires_in * 1000;
+              localStorage.setItem("instagram_token_expiry", expiryTime.toString());
+            }
+
+            // Save additional Instagram account info
+            if (data.instagram_account_id) {
+              localStorage.setItem("instagram_account_id", data.instagram_account_id);
+            }
+            if (data.instagram_username) {
+              localStorage.setItem("instagram_username", data.instagram_username);
+            }
+            // Note: page_id may not be available with Instagram Basic Display API
+            if (data.page_id) {
+              localStorage.setItem("instagram_page_id", data.page_id);
+            }
+
+            toast.success("Instagram connected successfully!", { autoClose: 3000 });
+
+            // Update channel status
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
+            );
+
+            // Clean up URL by removing query parameters
+            setSearchParams({});
+          } else {
+            throw new Error(data.error || "Failed to exchange code for access token");
+          }
+        } catch (error) {
+          console.error("Error exchanging code for token:", error);
+          toast.error(error.message || "Failed to connect Instagram. Please try again.", {
+            autoClose: 5000,
+          });
+          // Clean up URL
+          setSearchParams({});
+        }
+      }
+    };
+
+    handleInstagramCallback();
+  }, [searchParams, setSearchParams]);
+
+  // Verify WhatsApp and Instagram connection status on component mount
+  useEffect(() => {
+    const verifyConnections = async () => {
+      setCheckingConnection(true);
+      const backendUrl =
+        process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
+      // Verify WhatsApp connection
+      const whatsappToken = localStorage.getItem("whatsapp_token");
+      const instagramUserAccessToken = localStorage.getItem("instagram_user_access_token");
+      if (!instagramUserAccessToken) {
+        setChannels((prev) =>
+          prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
+        );
+      } else {
+        // Get user accounts
+        const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "ngrok-skip-browser-warning": "true",
           },
-          body: JSON.stringify({ token: storedToken }),
+          body: JSON.stringify({ token: instagramUserAccessToken }),
         });
-
         const data = await response.json();
-
-        if (response.ok && data.success) {
-          // Token is valid, mark as connected
-          setChannels((prev) =>
-            prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: true } : ch))
-          );
+        if (response.ok && data.success && data.accountInfo) {
+          console.log("✅ Instagram user accounts found");
         } else {
-          // Token is invalid, remove it and mark as disconnected
-          localStorage.removeItem("whatsapp_token");
+          console.log("❌ No Instagram user accounts found");
+        }
+      }
+      if (!whatsappToken) {
+        setChannels((prev) =>
+          prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
+        );
+      } else {
+        // Verify token validity
+        try {
+          const response = await fetch(`${backendUrl}/api/verify-whatsapp-token`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            },
+            body: JSON.stringify({ token: whatsappToken }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: true } : ch))
+            );
+          } else {
+            localStorage.removeItem("whatsapp_token");
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
+            );
+          }
+        } catch (error) {
+          console.error("Error verifying WhatsApp token on mount:", error);
           setChannels((prev) =>
             prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
           );
         }
-      } catch (error) {
-        console.error("Error verifying WhatsApp token on mount:", error);
-        // On error, mark as disconnected but keep token (might be network issue)
-        setChannels((prev) =>
-          prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
-        );
-      } finally {
-        setCheckingConnection(false);
       }
+
+      // Verify Instagram connection
+      const instagramToken = localStorage.getItem("instagram_page_access_token");
+      if (instagramToken) {
+        // Check if token is expired
+        const expiryTime = localStorage.getItem("instagram_token_expiry");
+        if (expiryTime) {
+          const isExpired = Date.now() > parseInt(expiryTime, 10);
+          if (isExpired) {
+            // Token expired, remove it
+            localStorage.removeItem("instagram_page_access_token");
+            localStorage.removeItem("instagram_token_type");
+            localStorage.removeItem("instagram_token_expiry");
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
+            );
+          } else {
+            // Token is valid
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
+            );
+          }
+        } else {
+          // No expiry info, assume token is valid
+          setChannels((prev) =>
+            prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
+          );
+        }
+      } else {
+        setChannels((prev) =>
+          prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
+        );
+      }
+
+      setCheckingConnection(false);
     };
 
-    verifyWhatsAppConnection();
+    verifyConnections();
   }, []); // Run only on mount
 
   const handleConnect = (channelId) => {
     if (channelId === "whatsapp") {
       setShowWhatsAppModal(true);
-    } else {
-      setChannels((prev) =>
-        prev.map((ch) => (ch.id === channelId ? { ...ch, connected: true } : ch))
-      );
-      toast.success(`${channels.find((c) => c.id === channelId)?.name} connected successfully`);
+    } else if (channelId === "instagram") {
+      handleInstagramConnect();
     }
   };
 
   const handleWhatsAppConnect = (token) => {
-    console.log("WhatsApp token verified and stored:", token);
     setChannels((prev) =>
       prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: true } : ch))
     );
     toast.success("WhatsApp Business connected successfully!");
+  };
+
+  const handleInstagramConnect = () => {
+    const state = Math.random().toString(36).substring(2);
+    const encodedRedirectUri = encodeURIComponent(redirectUri);
+    // Use Facebook OAuth for Instagram Business API (this is the standard way)
+    const authUrl = `https://www.facebook.com/${graphVersion}/dialog/oauth?client_id=${appId}&redirect_uri=${encodedRedirectUri}&scope=${instagramScopes}&response_type=code&state=${state}`;
+    window.location.href = authUrl;
   };
 
   const handleWhatsAppError = (errorMessage) => {
@@ -160,13 +347,26 @@ const Channels = () => {
   };
 
   const handleDisconnect = (channelId) => {
-    localStorage.removeItem("whatsapp_token");
+    if (channelId === "whatsapp") {
+      localStorage.removeItem("whatsapp_token");
+    } else if (channelId === "instagram") {
+      localStorage.removeItem("instagram_page_access_token");
+      localStorage.removeItem("instagram_user_access_token");
+      localStorage.removeItem("instagram_account_id");
+      localStorage.removeItem("instagram_username");
+      localStorage.removeItem("instagram_page_id");
+      localStorage.removeItem("instagram_token_type");
+      localStorage.removeItem("instagram_token_expiry");
+    }
     setChannels((prev) =>
       prev.map((ch) => (ch.id === channelId ? { ...ch, connected: false } : ch))
     );
+    toast.success(`${channels.find((c) => c.id === channelId)?.name} disconnected successfully`);
   };
 
   const handleSync = async (channelId) => {
+    const backendUrl =
+      process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
     if (channelId === "whatsapp") {
       // Get stored token from localStorage
       const storedToken = localStorage.getItem("whatsapp_token");
@@ -177,11 +377,9 @@ const Channels = () => {
         return;
       }
 
+      toast.loading("Syncing WhatsApp...");
       // Verify token validity
       try {
-        const backendUrl =
-          process.env.REACT_APP_BACKEND_URL ||
-          "https://unexigent-felisha-calathiform.ngrok-free.dev";
         const response = await fetch(`${backendUrl}/api/verify-whatsapp-token`, {
           method: "POST",
           headers: {
@@ -195,7 +393,6 @@ const Channels = () => {
 
         if (response.ok && data.success) {
           // Token is valid, proceed with sync
-          console.log(`Syncing ${channelId}`);
 
           // Update lastSync date
           const currentDate = new Date();
@@ -207,6 +404,7 @@ const Channels = () => {
             prev.map((ch) => (ch.id === channelId ? { ...ch, lastSync: formattedDate } : ch))
           );
 
+          toast.dismiss();
           toast.success("Sync completed successfully!");
         } else {
           // Token is invalid, open verification modal
@@ -215,6 +413,7 @@ const Channels = () => {
             prev.map((ch) => (ch.id === channelId ? { ...ch, connected: false } : ch))
           );
           setShowWhatsAppModal(true);
+          toast.dismiss();
           toast.error("Token expired or invalid. Please verify your token again.");
         }
       } catch (error) {
@@ -224,7 +423,28 @@ const Channels = () => {
         toast.error("Failed to verify token. Please check your connection and try again.");
       }
     } else {
-      console.log(`Syncing ${channelId}`);
+      const instagramUserAccessToken = localStorage.getItem("instagram_user_access_token");
+      if (!instagramUserAccessToken) {
+        toast.error("Instagram token not found. Please connect your Instagram account again.");
+        return;
+      }
+      toast.loading("Syncing Instagram...");
+      const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        },
+        body: JSON.stringify({ token: instagramUserAccessToken }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success && data.accountInfo) {
+        toast.dismiss();
+        toast.success("Instagram sync completed successfully!");
+      } else {
+        toast.dismiss();
+        toast.error("Failed to sync Instagram. Please check your connection and try again.");
+      }
     }
   };
 
@@ -289,61 +509,74 @@ const Channels = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-5">
-            {whatsappChannel && (
-              <div className="bg-slate-700 rounded-xl p-6 relative border border-gray-600">
+          <div className="grid grid-cols-2 gap-5">
+            {channels.map((channel) => (
+              <div
+                key={channel.id}
+                className="bg-slate-700 rounded-xl p-6 relative border border-gray-600"
+              >
                 <div className="flex items-center gap-4 mb-5">
-                  <div className="flex-shrink-0">{whatsappChannel.logo}</div>
+                  <div className="flex-shrink-0">{channel.logo}</div>
                   <div className="flex-1">
                     <h3 className="text-xl font-semibold text-slate-100 m-0 mb-1">
-                      {whatsappChannel.name}
+                      {channel.name}
                     </h3>
-                    <p className="text-sm text-slate-400 m-0">{whatsappChannel.subtitle}</p>
+                    <p className="text-sm text-slate-400 m-0">{channel.subtitle}</p>
                   </div>
                   <div
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold flex-shrink-0 flex items-center ${
-                      checkingConnection
+                    className={`px-3 py-1.5 rounded-full text-sm font-semibold flex-shrink-0 flex items-center ${
+                      channel.id === "whatsapp" && checkingConnection
                         ? "bg-slate-500/20 text-slate-400"
-                        : whatsappChannel.connected
-                        ? "bg-green-500/20 text-green-500"
-                        : "bg-red-500/20 text-red-500"
+                        : channel.connected
+                        ? "bg-green-500 bg-opacity-20 text-green-400"
+                        : "bg-red-500 bg-opacity-20 text-red-400"
                     }`}
                   >
-                    {checkingConnection ? (
+                    {channel.id === "whatsapp" && checkingConnection ? (
                       <>
-                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                        <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
                         Checking...
                       </>
                     ) : (
                       <>
-                        <Check className="w-3 h-3 mr-1" />
-                        {whatsappChannel.connected ? "Connected" : "Disconnected"}
+                        {channel.connected ? (
+                          <CircleCheckBig className="w-4 h-4 mr-2" />
+                        ) : (
+                          <CircleX className="w-4 h-4 mr-2" />
+                        )}
+                        {channel.connected ? "Connected" : "Disconnected"}
                       </>
                     )}
                   </div>
                 </div>
-                <div className="flex gap-6 mb-5 flex-wrap">
-                  <div className="flex items-center gap-2 text-slate-400 text-sm">
-                    <Users className="w-4 h-4 flex-shrink-0" />
-                    <span>Leads {whatsappChannel.leads}</span>
+                <div className="grid grid-cols-2 gap-4 mb-5 flex-wrap">
+                  <div className="bg-slate-600 rounded-lg p-2">
+                    <div className="flex items-center gap-2 justify-between text-sm text-[#9ca3af]">
+                      <span>Leads</span>
+                      <Users className="w-4 h-4 flex-shrink-0" />
+                    </div>
+                    <p className="text-white text-2xl font-bold mt-1">{channel.leads || "-"}</p>
                   </div>
-                  <div className="flex items-center gap-2 text-slate-400 text-sm">
-                    <Clock className="w-4 h-4 flex-shrink-0" />
-                    <span>Last Sync {whatsappChannel.lastSync}</span>
+                  <div className="bg-slate-600 rounded-lg p-2">
+                    <div className="flex items-center gap-2 justify-between text-sm text-[#9ca3af]">
+                      <span>Last Sync</span>
+                      <Clock className="w-4 h-4 flex-shrink-0" />
+                    </div>
+                    <p className="text-white text-sm font-bold mt-1">{channel.lastSync || "-"}</p>
                   </div>
                 </div>
                 <div className="flex gap-3 items-center">
-                  {whatsappChannel.connected ? (
+                  {channel.connected ? (
                     <>
                       <button
                         className="px-5 py-2.5 border-none rounded-lg text-sm font-medium cursor-pointer transition-all flex items-center gap-2 bg-red-500 text-white hover:bg-red-600 hover:-translate-y-px"
-                        onClick={() => handleDisconnect(whatsappChannel.id)}
+                        onClick={() => handleDisconnect(channel.id)}
                       >
                         Disconnect
                       </button>
                       <button
                         className="px-5 py-2.5 border-none rounded-lg text-sm font-medium cursor-pointer transition-all flex items-center gap-2 bg-blue-500 text-white hover:bg-blue-600 hover:-translate-y-px"
-                        onClick={() => handleSync(whatsappChannel.id)}
+                        onClick={() => handleSync(channel.id)}
                       >
                         <RefreshCw className="w-4 h-4" />
                         Sync Now
@@ -352,7 +585,7 @@ const Channels = () => {
                   ) : (
                     <button
                       className="px-5 py-2.5 border-none rounded-lg text-sm font-medium cursor-pointer transition-all flex items-center gap-2 bg-green-500 text-white hover:bg-green-600 hover:-translate-y-px"
-                      onClick={() => handleConnect(whatsappChannel.id)}
+                      onClick={() => handleConnect(channel.id)}
                     >
                       Connect
                     </button>
@@ -361,7 +594,7 @@ const Channels = () => {
                     <Settings className="w-5 h-5" />
                   </button>
                 </div>
-                {whatsappChannel.connected && (
+                {channel.id === "whatsapp" && channel.connected && (
                   <div className="mt-4 p-3 pl-4 bg-blue-500/10 border-l-4 border-blue-500 rounded-md text-blue-300 text-sm leading-relaxed flex items-center w-full">
                     <Zap className="w-5 h-5 mr-2 flex-shrink-0" />
                     WhatsApp Assignment Ready. You can now assign leads to sales reps via WhatsApp
@@ -369,7 +602,7 @@ const Channels = () => {
                   </div>
                 )}
               </div>
-            )}
+            ))}
           </div>
         </div>
       </div>

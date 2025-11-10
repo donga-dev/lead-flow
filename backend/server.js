@@ -558,6 +558,436 @@ app.post("/api/verify-whatsapp-token", async (req, res) => {
   }
 });
 
+// Exchange Instagram OAuth code for access token (using Facebook OAuth for Instagram Business API)
+app.post("/api/instagram/exchange-token", async (req, res) => {
+  try {
+    const { code, redirectUri } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: "Authorization code is required",
+      });
+    }
+
+    const appId = process.env.REACT_APP_FACEBOOK_APP_ID || "1599198441064709";
+    const appSecret = process.env.FACEBOOK_APP_SECRET || "12a042d6c5d3013e0921c382f84072f7";
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+
+    if (!appSecret) {
+      console.error("❌ FACEBOOK_APP_SECRET environment variable is not set");
+      return res.status(500).json({
+        success: false,
+        error: "Server configuration error: App secret not configured",
+      });
+    }
+
+    // Step 1: Exchange code for Facebook user access token
+    const tokenUrl = `https://graph.facebook.com/${graphVersion}/oauth/access_token`;
+    const params = new URLSearchParams({
+      client_id: appId,
+      client_secret: appSecret,
+      redirect_uri:
+        redirectUri || `${process.env.REACT_APP_FRONTEND_URL || "http://localhost:3000"}/channels`,
+      code: code,
+    });
+
+    console.log(`🔐 Step 1: Exchanging Instagram OAuth code for Facebook access token...`);
+
+    const tokenResponse = await fetch(`${tokenUrl}?${params.toString()}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.json();
+      console.error("❌ Token exchange failed:", errorData);
+      return res.status(tokenResponse.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to exchange code for access token",
+        details: errorData,
+      });
+    }
+
+    const tokenData = await tokenResponse.json();
+    const userAccessToken = tokenData.access_token;
+    console.log(`✅ Step 1: Successfully exchanged code for Facebook user access token`);
+
+    // Step 2: Exchange for long-lived token (optional but recommended)
+    console.log(`🔐 Step 2: Exchanging for long-lived token...`);
+    const longLivedTokenUrl = `https://graph.facebook.com/${graphVersion}/oauth/access_token`;
+    const longLivedParams = new URLSearchParams({
+      grant_type: "fb_exchange_token",
+      client_id: appId,
+      client_secret: appSecret,
+      fb_exchange_token: userAccessToken,
+    });
+
+    const longLivedResponse = await fetch(`${longLivedTokenUrl}?${longLivedParams.toString()}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    let longLivedToken = userAccessToken;
+    if (longLivedResponse.ok) {
+      const longLivedData = await longLivedResponse.json();
+      longLivedToken = longLivedData.access_token;
+      console.log(`✅ Step 2: Successfully obtained long-lived token`);
+    } else {
+      console.log(`⚠️ Step 2: Could not get long-lived token, using short-lived token`);
+    }
+
+    // Step 3: Get user's Facebook Pages
+    console.log(`🔐 Step 3: Fetching Facebook Pages...`);
+    const pagesUrl = `https://graph.facebook.com/${graphVersion}/me/accounts`;
+    const pagesResponse = await fetch(`${pagesUrl}?access_token=${longLivedToken}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!pagesResponse.ok) {
+      const errorData = await pagesResponse.json();
+      console.error("❌ Failed to fetch pages:", errorData);
+      return res.status(pagesResponse.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to fetch Facebook Pages",
+        details: errorData,
+      });
+    }
+
+    const pagesData = await pagesResponse.json();
+    const pages = pagesData.data || [];
+    console.log(`✅ Step 3: Found ${pages.length} Facebook Page(s)`);
+
+    if (pages.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "No Facebook Pages found. Please create a Facebook Page and connect it to an Instagram Business Account.",
+      });
+    }
+
+    // Step 4: Get Instagram Business Account for each page
+    let instagramAccount = null;
+    let pageAccessToken = null;
+    let pageId = null;
+
+    for (const page of pages) {
+      console.log(
+        `🔐 Step 4: Checking page "${page.name}" (ID: ${page.id}) for Instagram account...`
+      );
+
+      // Get page access token (this is what we need for Instagram API)
+      pageAccessToken = page.access_token;
+      pageId = page.id;
+
+      // Get Instagram Business Account connected to this page
+      const instagramUrl = `https://graph.facebook.com/${graphVersion}/${pageId}?fields=instagram_business_account&access_token=${pageAccessToken}`;
+      const instagramResponse = await fetch(instagramUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (instagramResponse.ok) {
+        const instagramData = await instagramResponse.json();
+        if (instagramData.instagram_business_account) {
+          instagramAccount = instagramData.instagram_business_account;
+          console.log(`✅ Step 4: Found Instagram Business Account (ID: ${instagramAccount.id})`);
+          break;
+        }
+      }
+    }
+
+    if (!instagramAccount) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "No Instagram Business Account found. Please connect an Instagram Business Account to your Facebook Page.",
+      });
+    }
+
+    // Step 5: Verify Instagram access token by getting account info
+    console.log(`🔐 Step 5: Verifying Instagram access token...`);
+    const verifyUrl = `https://graph.facebook.com/${graphVersion}/${instagramAccount.id}?fields=id,username&access_token=${pageAccessToken}`;
+    const verifyResponse = await fetch(verifyUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!verifyResponse.ok) {
+      const errorData = await verifyResponse.json();
+      console.error("❌ Failed to verify Instagram token:", errorData);
+      return res.status(verifyResponse.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to verify Instagram access token",
+        details: errorData,
+      });
+    }
+
+    const accountInfo = await verifyResponse.json();
+    console.log(`✅ Step 5: Instagram account verified - @${accountInfo.username || "N/A"}`);
+
+    // Return both tokens:
+    // - user_access_token: For user-level API calls like /me/accounts
+    // - access_token (page token): For Instagram API calls
+    res.json({
+      success: true,
+      access_token: pageAccessToken, // This is the Instagram access token (page token) - use for Instagram API
+      user_access_token: longLivedToken, // Use this for /me/accounts and other user-level calls
+      token_type: "bearer",
+      expires_in: tokenData.expires_in || 5184000, // Long-lived tokens expire in ~60 days
+      instagram_account_id: instagramAccount.id,
+      instagram_username: accountInfo.username,
+      page_id: pageId,
+      page_name: pages.find((p) => p.id === pageId)?.name,
+    });
+  } catch (error) {
+    console.error("❌ Error exchanging token:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to exchange code for access token",
+    });
+  }
+});
+
+// Verify Instagram access token (supports both Instagram Basic Display API and Facebook Graph API)
+app.post("/api/verify-instagram-token", async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: "Token is required",
+      });
+    }
+
+    console.log(`🔍 Verifying Instagram token...`);
+
+    // Try Instagram Basic Display API first (graph.instagram.com)
+    try {
+      const instagramUrl = `https://graph.instagram.com/me?fields=id,username,account_type&access_token=${token}`;
+      const instagramResponse = await fetch(instagramUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (instagramResponse.ok) {
+        const instagramData = await instagramResponse.json();
+        console.log(
+          `✅ Instagram Basic Display API token verified successfully for account: @${
+            instagramData.username || instagramData.id
+          }`
+        );
+
+        return res.json({
+          success: true,
+          message: "Token verified successfully",
+          accountInfo: {
+            instagram_account_id: instagramData.id,
+            instagram_username: instagramData.username,
+            account_type: instagramData.account_type,
+          },
+        });
+      }
+    } catch (instagramError) {
+      console.log(
+        `⚠️ Token is not an Instagram Basic Display API token, trying Facebook Graph API...`
+      );
+    }
+
+    // Fallback to Facebook Graph API (for Instagram Business accounts)
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+    let userInfo = null;
+    let isUserToken = false;
+
+    try {
+      const userUrl = `https://graph.facebook.com/${graphVersion}/me?fields=id,name&access_token=${token}`;
+      const userResponse = await fetch(userUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (userResponse.ok) {
+        userInfo = await userResponse.json();
+        isUserToken = true;
+        console.log(`✅ Token is a Facebook user token for: ${userInfo.name || userInfo.id}`);
+      }
+    } catch (error) {
+      console.log(`⚠️ Token is not a user token, trying as page token...`);
+    }
+
+    let instagramAccount = null;
+    let pageInfo = null;
+
+    if (isUserToken) {
+      // It's a user token, get pages and find Instagram account
+      const pagesUrl = `https://graph.facebook.com/${graphVersion}/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&access_token=${token}`;
+      const pagesResponse = await fetch(pagesUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!pagesResponse.ok) {
+        const errorData = await pagesResponse.json();
+        console.error("❌ Failed to fetch pages:", errorData);
+        return res.status(pagesResponse.status).json({
+          success: false,
+          error: errorData.error?.message || "Failed to fetch Facebook Pages",
+          details: errorData,
+        });
+      }
+
+      const pagesData = await pagesResponse.json();
+      const pages = pagesData.data || [];
+
+      // Find page with Instagram account
+      for (const page of pages) {
+        if (page.instagram_business_account) {
+          pageInfo = {
+            id: page.id,
+            name: page.name,
+            access_token: page.access_token,
+          };
+          instagramAccount = page.instagram_business_account;
+          break;
+        }
+      }
+
+      // If not found in initial response, try fetching individually
+      if (!instagramAccount) {
+        for (const page of pages) {
+          const pageUrl = `https://graph.facebook.com/${graphVersion}/${page.id}?fields=instagram_business_account&access_token=${token}`;
+          const pageResponse = await fetch(pageUrl, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (pageResponse.ok) {
+            const pageData = await pageResponse.json();
+            if (pageData.instagram_business_account) {
+              pageInfo = {
+                id: page.id,
+                name: page.name,
+                access_token: page.access_token,
+              };
+              instagramAccount = pageData.instagram_business_account;
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // It's likely a page token, try to get page info and Instagram account
+      try {
+        const pageUrl = `https://graph.facebook.com/${graphVersion}/me?fields=id,name,instagram_business_account&access_token=${token}`;
+        const pageResponse = await fetch(pageUrl, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (pageResponse.ok) {
+          const pageData = await pageResponse.json();
+          pageInfo = {
+            id: pageData.id,
+            name: pageData.name,
+          };
+          if (pageData.instagram_business_account) {
+            instagramAccount = pageData.instagram_business_account;
+          }
+        } else {
+          const errorData = await pageResponse.json();
+          console.error("❌ Failed to fetch page info:", errorData);
+          return res.status(pageResponse.status).json({
+            success: false,
+            error: errorData.error?.message || "Invalid token. Please check and try again.",
+            details: errorData,
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching page info:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to verify token. Please check your token and try again.",
+        });
+      }
+    }
+
+    if (!instagramAccount) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "No Instagram Business Account found. Please ensure your Facebook Page is connected to an Instagram Business Account.",
+      });
+    }
+
+    // Verify Instagram account by getting its details
+    const instagramUrl = `https://graph.facebook.com/${graphVersion}/${instagramAccount.id}?fields=id,username,name,profile_picture_url&access_token=${token}`;
+    const instagramResponse = await fetch(instagramUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!instagramResponse.ok) {
+      const errorData = await instagramResponse.json();
+      console.error("❌ Token verification failed:", errorData);
+      return res.status(instagramResponse.status).json({
+        success: false,
+        error: errorData.error?.message || "Invalid token. Please check and try again.",
+        details: errorData,
+      });
+    }
+
+    const instagramData = await instagramResponse.json();
+    console.log(
+      `✅ Instagram Business API token verified successfully for account: @${
+        instagramData.username || instagramData.id
+      }`
+    );
+
+    res.json({
+      success: true,
+      message: "Token verified successfully",
+      accountInfo: {
+        instagram_account_id: instagramData.id,
+        instagram_username: instagramData.username,
+        instagram_name: instagramData.name,
+        profile_picture_url: instagramData.profile_picture_url,
+        page_id: pageInfo?.id,
+        page_name: pageInfo?.name,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error verifying Instagram token:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to verify token",
+    });
+  }
+});
+
 // Get message templates from Facebook Graph API
 app.get("/api/templates", async (req, res) => {
   try {
