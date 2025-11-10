@@ -16,10 +16,34 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   path: "/socket.io/", // Explicitly set Socket.io path
   cors: {
-    origin: "*", // Allow all origins (change in production)
-    methods: ["GET", "POST"],
-    allowedHeaders: ["ngrok-skip-browser-warning"],
-    credentials: true,
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://lead-flow-gqlq.vercel.app",
+        "https://unexigent-felisha-calathiform.ngrok-free.dev",
+      ];
+
+      // Allow if origin is in allowed list or is an ngrok URL
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/.*\.ngrok-free\.dev$/.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Allow all for development (change in production)
+      }
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "ngrok-skip-browser-warning",
+      "lead-flow-gqlq.vercel.app",
+    ],
+    credentials: false,
   },
   transports: ["polling", "websocket"], // Support both polling and websocket
   allowEIO3: true, // Allow older Engine.IO clients
@@ -29,24 +53,52 @@ const io = new Server(httpServer, {
 
 // Middleware
 // CORS configuration - allow all origins for development
-app.use(
-  cors({
-    origin: "*", // Allow all origins
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "ngrok-skip-browser-warning",
-    ],
-    credentials: false, // Set to true if you need to send cookies
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
-  })
-);
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://lead-flow-gqlq.vercel.app",
+  "https://unexigent-felisha-calathiform.ngrok-free.dev",
+];
 
-// Handle preflight requests explicitly
-app.options("*", cors());
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Check if origin is an ngrok URL
+    if (/^https:\/\/.*\.ngrok-free\.dev$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    // For development, allow all origins
+    callback(null, true);
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "ngrok-skip-browser-warning",
+    "lead-flow-gqlq.vercel.app",
+    "Accept",
+    "Origin",
+  ],
+  credentials: false,
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly (cors middleware should handle this, but this ensures it works)
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 // Ensure Socket.io paths are not handled by Express
@@ -277,7 +329,10 @@ app.get("/api/messages/:phoneNumber", (req, res) => {
     // Set CORS headers explicitly
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, ngrok-skip-browser-warning, lead-flow-gqlq.vercel.app"
+    );
 
     // Decode URL-encoded phone number (e.g., %2B917359275948 -> +917359275948)
     let phoneNumber = req.params.phoneNumber;
@@ -330,7 +385,10 @@ app.get("/api/contacts", (req, res) => {
     // Set CORS headers explicitly
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, ngrok-skip-browser-warning, lead-flow-gqlq.vercel.app"
+    );
 
     const contacts = [];
 
