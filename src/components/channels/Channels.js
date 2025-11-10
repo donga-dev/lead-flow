@@ -18,6 +18,7 @@ const Channels = () => {
   // Instagram OAuth credentials (using Facebook OAuth for Instagram Business API)
   const appId = process.env.REACT_APP_FACEBOOK_APP_ID || "1599198441064709";
   const redirectUri = process.env.REACT_APP_REDIRECT_URI || window.location.origin + "/channels";
+  console.log("redirectUri", redirectUri);
   // const redirectUri = process.env.REACT_APP_REDIRECT_URI || "https://prnt.sc/YhdZA0DVLFwp";
   const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
 
