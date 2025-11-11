@@ -18,7 +18,6 @@ const Channels = () => {
   // Instagram OAuth credentials (using Facebook OAuth for Instagram Business API)
   const appId = process.env.REACT_APP_FACEBOOK_APP_ID || "1599198441064709";
   const redirectUri = process.env.REACT_APP_REDIRECT_URI || window.location.origin + "/channels";
-  console.log("redirectUri", redirectUri);
   // const redirectUri = process.env.REACT_APP_REDIRECT_URI || "https://prnt.sc/YhdZA0DVLFwp";
   const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
 
@@ -159,34 +158,28 @@ const Channels = () => {
           const data = await response.json();
 
           if (response.ok && data.success && data.access_token) {
-            // Save Instagram access token (page token) to localStorage
-            localStorage.setItem("instagram_page_access_token", data.access_token);
+            // Tokens are now stored on the backend in JSON files
+            // Only store userId (Instagram account ID) in localStorage for reference
+            if (data.userId || data.instagram_account_id) {
+              const userId = data.userId || data.instagram_account_id;
+              localStorage.setItem("instagram_user_id", userId);
 
-            // Save user access token if available (for /me/accounts calls)
-            if (data.user_access_token) {
-              localStorage.setItem("instagram_user_access_token", data.user_access_token);
-            }
+              // Store account info for display purposes only
+              if (data.instagram_account_id) {
+                localStorage.setItem("instagram_account_id", data.instagram_account_id);
+              }
+              if (data.instagram_username) {
+                localStorage.setItem("instagram_username", data.instagram_username);
+              }
+              if (data.page_id) {
+                localStorage.setItem("instagram_page_id", data.page_id);
+              }
 
-            // Also save token type and expiry if available
-            if (data.token_type) {
-              localStorage.setItem("instagram_token_type", data.token_type);
-            }
-            if (data.expires_in) {
-              // Calculate expiry timestamp
-              const expiryTime = Date.now() + data.expires_in * 1000;
-              localStorage.setItem("instagram_token_expiry", expiryTime.toString());
-            }
-
-            // Save additional Instagram account info
-            if (data.instagram_account_id) {
-              localStorage.setItem("instagram_account_id", data.instagram_account_id);
-            }
-            if (data.instagram_username) {
-              localStorage.setItem("instagram_username", data.instagram_username);
-            }
-            // Note: page_id may not be available with Instagram Basic Display API
-            if (data.page_id) {
-              localStorage.setItem("instagram_page_id", data.page_id);
+              // Remove old token storage from localStorage (cleanup)
+              localStorage.removeItem("instagram_page_access_token");
+              localStorage.removeItem("instagram_user_access_token");
+              localStorage.removeItem("instagram_token_type");
+              localStorage.removeItem("instagram_token_expiry");
             }
 
             toast.success("Instagram connected successfully!", { autoClose: 3000 });
@@ -223,28 +216,6 @@ const Channels = () => {
         process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
       // Verify WhatsApp connection
       const whatsappToken = localStorage.getItem("whatsapp_token");
-      const instagramUserAccessToken = localStorage.getItem("instagram_user_access_token");
-      if (!instagramUserAccessToken) {
-        setChannels((prev) =>
-          prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
-        );
-      } else {
-        // Get user accounts
-        const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
-          },
-          body: JSON.stringify({ token: instagramUserAccessToken }),
-        });
-        const data = await response.json();
-        if (response.ok && data.success && data.accountInfo) {
-          console.log("✅ Instagram user accounts found");
-        } else {
-          console.log("❌ No Instagram user accounts found");
-        }
-      }
       if (!whatsappToken) {
         setChannels((prev) =>
           prev.map((ch) => (ch.id === "whatsapp" ? { ...ch, connected: false } : ch))
@@ -281,34 +252,67 @@ const Channels = () => {
         }
       }
 
-      // Verify Instagram connection
-      const instagramToken = localStorage.getItem("instagram_page_access_token");
-      if (instagramToken) {
-        // Check if token is expired
-        const expiryTime = localStorage.getItem("instagram_token_expiry");
-        if (expiryTime) {
-          const isExpired = Date.now() > parseInt(expiryTime, 10);
-          if (isExpired) {
-            // Token expired, remove it
-            localStorage.removeItem("instagram_page_access_token");
-            localStorage.removeItem("instagram_token_type");
-            localStorage.removeItem("instagram_token_expiry");
+      // Verify Instagram connection (tokens stored on backend)
+      const instagramUserId = localStorage.getItem("instagram_user_id");
+      if (instagramUserId) {
+        // Check if token exists and is valid on backend
+        try {
+          const response = await fetch(
+            `${backendUrl}/api/instagram/tokens/page/${instagramUserId}`,
+            {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "ngrok-skip-browser-warning": "true",
+              },
+            }
+          );
+
+          if (!response.ok) {
+            console.error(
+              `❌ Instagram token API error: ${response.status} ${response.statusText}`
+            );
             setChannels((prev) =>
               prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
             );
-          } else {
+            return;
+          }
+
+          const data = await response.json();
+          console.log("Instagram token check response:", data);
+
+          if (data.success && !data.isExpired) {
             // Token is valid
+            console.log("✅ Instagram token is valid and not expired");
             setChannels((prev) =>
               prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
             );
+          } else {
+            // Token expired or not found
+            console.log(
+              `❌ Instagram token issue - success: ${data.success}, isExpired: ${data.isExpired}, error: ${data.error}`
+            );
+            if (data.error && data.error.includes("not found")) {
+              // Token file doesn't exist, clean up localStorage
+              localStorage.removeItem("instagram_user_id");
+              localStorage.removeItem("instagram_account_id");
+              localStorage.removeItem("instagram_username");
+              localStorage.removeItem("instagram_page_id");
+            }
+            setChannels((prev) =>
+              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
+            );
           }
-        } else {
-          // No expiry info, assume token is valid
-          setChannels((prev) =>
-            prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
+        } catch (error) {
+          console.error("❌ Error checking Instagram token:", error);
+          // Don't set to disconnected on network errors - might be temporary
+          // Only set to disconnected if we're sure the token is invalid
+          console.log(
+            "⚠️ Network error checking Instagram token, keeping current connection status"
           );
         }
       } else {
+        console.log("No Instagram userId found in localStorage");
         setChannels((prev) =>
           prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
         );
@@ -347,17 +351,32 @@ const Channels = () => {
     toast.error(errorMessage, { autoClose: 5000 });
   };
 
-  const handleDisconnect = (channelId) => {
+  const handleDisconnect = async (channelId) => {
     if (channelId === "whatsapp") {
       localStorage.removeItem("whatsapp_token");
     } else if (channelId === "instagram") {
-      localStorage.removeItem("instagram_page_access_token");
-      localStorage.removeItem("instagram_user_access_token");
+      const instagramUserId = localStorage.getItem("instagram_user_id");
+      if (instagramUserId) {
+        // Delete tokens from backend
+        const backendUrl =
+          process.env.REACT_APP_BACKEND_URL ||
+          "https://unexigent-felisha-calathiform.ngrok-free.dev";
+        try {
+          await fetch(`${backendUrl}/api/instagram/tokens/${instagramUserId}`, {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            },
+          });
+        } catch (error) {
+          console.error("Error deleting Instagram tokens:", error);
+        }
+      }
+      localStorage.removeItem("instagram_user_id");
       localStorage.removeItem("instagram_account_id");
       localStorage.removeItem("instagram_username");
       localStorage.removeItem("instagram_page_id");
-      localStorage.removeItem("instagram_token_type");
-      localStorage.removeItem("instagram_token_expiry");
     }
     setChannels((prev) =>
       prev.map((ch) => (ch.id === channelId ? { ...ch, connected: false } : ch))
@@ -424,25 +443,52 @@ const Channels = () => {
         toast.error("Failed to verify token. Please check your connection and try again.");
       }
     } else {
-      const instagramUserAccessToken = localStorage.getItem("instagram_user_access_token");
-      if (!instagramUserAccessToken) {
+      const instagramUserId = localStorage.getItem("instagram_user_id");
+      if (!instagramUserId) {
         toast.error("Instagram token not found. Please connect your Instagram account again.");
         return;
       }
+
+      // Get user access token from backend
       toast.loading("Syncing Instagram...");
-      const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "true",
-        },
-        body: JSON.stringify({ token: instagramUserAccessToken }),
-      });
-      const data = await response.json();
-      if (response.ok && data.success && data.accountInfo) {
-        toast.dismiss();
-        toast.success("Instagram sync completed successfully!");
-      } else {
+      try {
+        const tokenResponse = await fetch(
+          `${backendUrl}/api/instagram/tokens/user/${instagramUserId}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            },
+          }
+        );
+
+        const tokenData = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenData.success || tokenData.isExpired) {
+          toast.error(
+            "Instagram token expired or not found. Please connect your Instagram account again."
+          );
+          return;
+        }
+
+        const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
+          body: JSON.stringify({ token: tokenData.token }),
+        });
+        const data = await response.json();
+        if (response.ok && data.success && data.accountInfo) {
+          toast.dismiss();
+          toast.success("Instagram sync completed successfully!");
+        } else {
+          toast.dismiss();
+          toast.error("Failed to sync Instagram. Please try again.");
+        }
+      } catch (error) {
+        console.error("Error syncing Instagram:", error);
         toast.dismiss();
         toast.error("Failed to sync Instagram. Please check your connection and try again.");
       }

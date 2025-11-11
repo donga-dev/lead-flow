@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import cron from "node-cron";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,6 +141,424 @@ function saveMessages() {
 
 // Load messages on startup
 loadMessages();
+
+// Token storage helper functions
+const TOKENS_DIR = path.join(__dirname, "tokens");
+
+// Ensure tokens directory exists
+if (!fs.existsSync(TOKENS_DIR)) {
+  fs.mkdirSync(TOKENS_DIR, { recursive: true });
+  console.log("✅ Created tokens directory");
+}
+
+/**
+ * Migrate old separate token files to new combined format
+ * This function will be called on startup to convert existing files
+ */
+function migrateTokenFiles() {
+  try {
+    const files = fs.readdirSync(TOKENS_DIR);
+    const userIds = new Set();
+
+    // Find all user IDs from old format files
+    files.forEach((file) => {
+      const match = file.match(/^(\d+)_(?:user|page)_access_token\.json$/);
+      if (match) {
+        userIds.add(match[1]);
+      }
+    });
+
+    if (userIds.size === 0) {
+      return; // No old files to migrate
+    }
+
+    console.log(
+      `🔄 Migrating ${userIds.size} user(s) from old token file format to new combined format...`
+    );
+
+    userIds.forEach((userId) => {
+      try {
+        const userTokenFile = path.join(TOKENS_DIR, `${userId}_user_access_token.json`);
+        const pageTokenFile = path.join(TOKENS_DIR, `${userId}_page_access_token.json`);
+        const newTokenFile = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+
+        // Skip if new format already exists
+        if (fs.existsSync(newTokenFile)) {
+          // Delete old files if new format exists
+          if (fs.existsSync(userTokenFile)) {
+            fs.unlinkSync(userTokenFile);
+          }
+          if (fs.existsSync(pageTokenFile)) {
+            fs.unlinkSync(pageTokenFile);
+          }
+          return;
+        }
+
+        let userTokenData = null;
+        let pageTokenData = null;
+
+        // Load user token if exists
+        if (fs.existsSync(userTokenFile)) {
+          try {
+            const data = fs.readFileSync(userTokenFile, "utf8");
+            userTokenData = JSON.parse(data);
+          } catch (error) {
+            console.warn(`⚠️ Could not parse user token file for ${userId}:`, error);
+          }
+        }
+
+        // Load page token if exists
+        if (fs.existsSync(pageTokenFile)) {
+          try {
+            const data = fs.readFileSync(pageTokenFile, "utf8");
+            pageTokenData = JSON.parse(data);
+          } catch (error) {
+            console.warn(`⚠️ Could not parse page token file for ${userId}:`, error);
+          }
+        }
+
+        // Create new combined file
+        const tokensData = {
+          userAccessToken: userTokenData || null,
+          pageAccessToken: pageTokenData || null,
+        };
+
+        fs.writeFileSync(newTokenFile, JSON.stringify(tokensData, null, 2));
+        console.log(`✅ Migrated tokens for userId: ${userId}`);
+
+        // Delete old files after successful migration
+        if (fs.existsSync(userTokenFile)) {
+          fs.unlinkSync(userTokenFile);
+        }
+        if (fs.existsSync(pageTokenFile)) {
+          fs.unlinkSync(pageTokenFile);
+        }
+      } catch (error) {
+        console.error(`❌ Error migrating tokens for userId ${userId}:`, error);
+      }
+    });
+
+    console.log(`✅ Token migration completed`);
+  } catch (error) {
+    console.error("❌ Error during token migration:", error);
+  }
+}
+
+// Run migration on startup
+migrateTokenFiles();
+
+/**
+ * Save both user and page access tokens to a single JSON file
+ * Updates existing file if userId already exists
+ * @param {string} userId - User ID (Instagram account ID)
+ * @param {string} userToken - User access token
+ * @param {string} pageToken - Page access token
+ * @param {number} expiresIn - Expiration time in seconds
+ * @param {string} pageId - Optional page ID
+ */
+function saveTokens(userId, userToken, pageToken, expiresIn, pageId = null) {
+  try {
+    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+    const fileExists = fs.existsSync(filePath);
+    const expiresAt = Date.now() + expiresIn * 1000;
+
+    let tokensData;
+    if (fileExists) {
+      // Load existing data to preserve createdAt
+      try {
+        const existingData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        tokensData = {
+          userAccessToken: {
+            token: userToken,
+            expiresAt: expiresAt,
+            createdAt: existingData.userAccessToken?.createdAt || Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+          pageAccessToken: {
+            token: pageToken,
+            expiresAt: expiresAt,
+            createdAt: existingData.pageAccessToken?.createdAt || Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+          pageId: pageId || existingData.pageId || null,
+        };
+        console.log(`🔄 Updated tokens for userId: ${userId}`);
+      } catch (parseError) {
+        // If file exists but can't be parsed, create new
+        tokensData = {
+          userAccessToken: {
+            token: userToken,
+            expiresAt: expiresAt,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+          pageAccessToken: {
+            token: pageToken,
+            expiresAt: expiresAt,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+          pageId: pageId || null,
+        };
+        console.log(`✅ Saved tokens for userId: ${userId} (recreated after parse error)`);
+      }
+    } else {
+      // New file
+      tokensData = {
+        userAccessToken: {
+          token: userToken,
+          expiresAt: expiresAt,
+          createdAt: Date.now(),
+          expiresIn: expiresIn,
+        },
+        pageAccessToken: {
+          token: pageToken,
+          expiresAt: expiresAt,
+          createdAt: Date.now(),
+          expiresIn: expiresIn,
+        },
+        pageId: pageId || null,
+      };
+      console.log(`✅ Created new tokens file for userId: ${userId}`);
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(tokensData, null, 2));
+  } catch (error) {
+    console.error(`❌ Error saving tokens for ${userId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Save user access token (updates existing combined file)
+ * @param {string} userId - User ID (Instagram account ID)
+ * @param {string} token - Access token
+ * @param {number} expiresIn - Expiration time in seconds
+ */
+function saveUserAccessToken(userId, token, expiresIn) {
+  try {
+    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+    const fileExists = fs.existsSync(filePath);
+    const expiresAt = Date.now() + expiresIn * 1000;
+
+    let tokensData;
+    if (fileExists) {
+      try {
+        tokensData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        tokensData.userAccessToken = {
+          token: token,
+          expiresAt: expiresAt,
+          createdAt: tokensData.userAccessToken?.createdAt || Date.now(),
+          updatedAt: Date.now(),
+          expiresIn: expiresIn,
+        };
+        // Preserve page token if it exists
+        if (!tokensData.pageAccessToken) {
+          tokensData.pageAccessToken = null;
+        }
+      } catch (parseError) {
+        tokensData = {
+          userAccessToken: {
+            token: token,
+            expiresAt: expiresAt,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+          pageAccessToken: null,
+        };
+      }
+    } else {
+      tokensData = {
+        userAccessToken: {
+          token: token,
+          expiresAt: expiresAt,
+          createdAt: Date.now(),
+          expiresIn: expiresIn,
+        },
+        pageAccessToken: null,
+      };
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(tokensData, null, 2));
+    console.log(`✅ Updated user access token for userId: ${userId}`);
+  } catch (error) {
+    console.error(`❌ Error saving user access token for ${userId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Save page access token (updates existing combined file)
+ * @param {string} userId - User ID (Instagram account ID)
+ * @param {string} token - Page access token
+ * @param {number} expiresIn - Expiration time in seconds
+ */
+function savePageAccessToken(userId, token, expiresIn) {
+  try {
+    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+    const fileExists = fs.existsSync(filePath);
+    const expiresAt = Date.now() + expiresIn * 1000;
+
+    let tokensData;
+    if (fileExists) {
+      try {
+        tokensData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        tokensData.pageAccessToken = {
+          token: token,
+          expiresAt: expiresAt,
+          createdAt: tokensData.pageAccessToken?.createdAt || Date.now(),
+          updatedAt: Date.now(),
+          expiresIn: expiresIn,
+        };
+        // Preserve user token if it exists
+        if (!tokensData.userAccessToken) {
+          tokensData.userAccessToken = null;
+        }
+      } catch (parseError) {
+        tokensData = {
+          userAccessToken: null,
+          pageAccessToken: {
+            token: token,
+            expiresAt: expiresAt,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            expiresIn: expiresIn,
+          },
+        };
+      }
+    } else {
+      tokensData = {
+        userAccessToken: null,
+        pageAccessToken: {
+          token: token,
+          expiresAt: expiresAt,
+          createdAt: Date.now(),
+          expiresIn: expiresIn,
+        },
+      };
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(tokensData, null, 2));
+    console.log(`✅ Updated page access token for userId: ${userId}`);
+  } catch (error) {
+    console.error(`❌ Error saving page access token for ${userId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Load all tokens from JSON file
+ * @param {string} userId - User ID (Instagram account ID)
+ * @returns {Object|null} Tokens data or null if not found
+ */
+function loadTokens(userId) {
+  try {
+    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+
+    const data = fs.readFileSync(filePath, "utf8");
+    const tokensData = JSON.parse(data);
+
+    return tokensData;
+  } catch (error) {
+    console.error(`❌ Error loading tokens for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Load user access token from JSON file
+ * @param {string} userId - User ID (Instagram account ID)
+ * @returns {Object|null} Token data or null if not found/expired
+ */
+function loadUserAccessToken(userId) {
+  try {
+    const tokensData = loadTokens(userId);
+    if (!tokensData || !tokensData.userAccessToken) {
+      return null;
+    }
+
+    const tokenData = tokensData.userAccessToken;
+
+    // Check if token is expired
+    if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
+      console.log(`⚠️ User access token for ${userId} has expired`);
+      return null;
+    }
+
+    return tokenData;
+  } catch (error) {
+    console.error(`❌ Error loading user access token for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Load page access token from JSON file
+ * @param {string} userId - User ID (Instagram account ID)
+ * @returns {Object|null} Token data or null if not found/expired
+ */
+function loadPageAccessToken(userId) {
+  try {
+    const tokensData = loadTokens(userId);
+    if (!tokensData || !tokensData.pageAccessToken) {
+      return null;
+    }
+
+    const tokenData = tokensData.pageAccessToken;
+
+    // Check if token is expired
+    if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
+      console.log(`⚠️ Page access token for ${userId} has expired`);
+      return null;
+    }
+
+    return tokenData;
+  } catch (error) {
+    console.error(`❌ Error loading page access token for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Delete tokens file (both user and page tokens)
+ * @param {string} userId - User ID (Instagram account ID)
+ */
+function deleteTokens(userId) {
+  try {
+    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`✅ Deleted tokens for userId: ${userId}`);
+    }
+  } catch (error) {
+    console.error(`❌ Error deleting tokens for ${userId}:`, error);
+  }
+}
+
+/**
+ * Delete user access token (legacy function - now deletes entire tokens file)
+ * @param {string} userId - User ID (Instagram account ID)
+ */
+function deleteUserAccessToken(userId) {
+  deleteTokens(userId);
+}
+
+/**
+ * Delete page access token (legacy function - now deletes entire tokens file)
+ * @param {string} userId - User ID (Instagram account ID)
+ */
+function deletePageAccessToken(userId) {
+  deleteTokens(userId);
+}
 
 // ✅ 1️⃣ VERIFY WEBHOOK (Meta sends a GET request here)
 app.get("/webhook", (req, res) => {
@@ -691,8 +1110,9 @@ app.post("/api/instagram/exchange-token", async (req, res) => {
     });
 
     let longLivedToken = userAccessToken;
+    let longLivedData = null;
     if (longLivedResponse.ok) {
-      const longLivedData = await longLivedResponse.json();
+      longLivedData = await longLivedResponse.json();
       longLivedToken = longLivedData.access_token;
       console.log(`✅ Step 2: Successfully obtained long-lived token`);
     } else {
@@ -795,7 +1215,21 @@ app.post("/api/instagram/exchange-token", async (req, res) => {
     const accountInfo = await verifyResponse.json();
     console.log(`✅ Step 5: Instagram account verified - @${accountInfo.username || "N/A"}`);
 
-    // Return both tokens:
+    // Use Instagram account ID as userId
+    const userId = instagramAccount.id;
+    // Use expires_in from long-lived token if available, otherwise use from initial token, or default to 60 days
+    const expiresIn = longLivedData?.expires_in || tokenData.expires_in || 5184000;
+
+    // Save tokens to JSON file (will update existing file if userId already exists)
+    try {
+      saveTokens(userId, longLivedToken, pageAccessToken, expiresIn, pageId);
+      console.log(`✅ Tokens processed for userId: ${userId} (updated if existed, created if new)`);
+    } catch (saveError) {
+      console.error("❌ Error saving tokens to files:", saveError);
+      // Continue even if save fails, but log the error
+    }
+
+    // Return both tokens (for backward compatibility, but frontend should not store in localStorage):
     // - user_access_token: For user-level API calls like /me/accounts
     // - access_token (page token): For Instagram API calls
     res.json({
@@ -803,11 +1237,12 @@ app.post("/api/instagram/exchange-token", async (req, res) => {
       access_token: pageAccessToken, // This is the Instagram access token (page token) - use for Instagram API
       user_access_token: longLivedToken, // Use this for /me/accounts and other user-level calls
       token_type: "bearer",
-      expires_in: tokenData.expires_in || 5184000, // Long-lived tokens expire in ~60 days
+      expires_in: expiresIn,
       instagram_account_id: instagramAccount.id,
       instagram_username: accountInfo.username,
       page_id: pageId,
       page_name: pages.find((p) => p.id === pageId)?.name,
+      userId: userId, // Include userId in response
     });
   } catch (error) {
     console.error("❌ Error exchanging token:", error);
@@ -1046,6 +1481,538 @@ app.post("/api/verify-instagram-token", async (req, res) => {
   }
 });
 
+// Get user access token by userId
+app.get("/api/instagram/tokens/user/:userId", (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const tokenData = loadUserAccessToken(userId);
+
+    if (!tokenData) {
+      return res.status(404).json({
+        success: false,
+        error: "User access token not found or expired",
+      });
+    }
+
+    res.json({
+      success: true,
+      token: tokenData.token,
+      expiresAt: tokenData.expiresAt,
+      createdAt: tokenData.createdAt,
+      expiresIn: tokenData.expiresIn,
+      isExpired: Date.now() > tokenData.expiresAt,
+    });
+  } catch (error) {
+    console.error("Error loading user access token:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to load user access token",
+    });
+  }
+});
+
+// Get page access token by userId
+app.get("/api/instagram/tokens/page/:userId", (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const tokenData = loadPageAccessToken(userId);
+
+    if (!tokenData) {
+      return res.status(404).json({
+        success: false,
+        error: "Page access token not found or expired",
+      });
+    }
+
+    res.json({
+      success: true,
+      token: tokenData.token,
+      expiresAt: tokenData.expiresAt,
+      createdAt: tokenData.createdAt,
+      expiresIn: tokenData.expiresIn,
+      isExpired: Date.now() > tokenData.expiresAt,
+    });
+  } catch (error) {
+    console.error("Error loading page access token:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to load page access token",
+    });
+  }
+});
+
+// Delete tokens by userId
+app.delete("/api/instagram/tokens/:userId", (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    deleteUserAccessToken(userId);
+    deletePageAccessToken(userId);
+
+    res.json({
+      success: true,
+      message: "Tokens deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting tokens:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to delete tokens",
+    });
+  }
+});
+
+// Get Instagram conversations for a user (using page ID)
+app.get("/api/instagram/conversations/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 25, after, before, fields } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    // Load tokens
+    const tokensData = loadTokens(userId);
+    const pageTokenData = tokensData?.pageAccessToken;
+
+    if (!pageTokenData || !pageTokenData.token) {
+      return res.status(404).json({
+        success: false,
+        error: "Page access token not found or expired. Please reconnect your Instagram account.",
+      });
+    }
+
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+    const pageAccessToken = pageTokenData.token;
+
+    // Get page ID from stored tokens, or fetch it if not available
+    let pageId = tokensData?.pageId;
+
+    // If page ID not stored, try to fetch it
+    if (!pageId) {
+      const userTokenData = tokensData?.userAccessToken;
+      if (userTokenData?.token) {
+        try {
+          const pagesUrl = `https://graph.facebook.com/${graphVersion}/me/accounts?fields=id,instagram_business_account&access_token=${userTokenData.token}`;
+          const pagesResponse = await fetch(pagesUrl, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (pagesResponse.ok) {
+            const pagesData = await pagesResponse.json();
+            const pages = pagesData.data || [];
+
+            // Find the page with matching Instagram Business Account
+            for (const page of pages) {
+              const pageDetailsUrl = `https://graph.facebook.com/${graphVersion}/${page.id}?fields=instagram_business_account&access_token=${pageAccessToken}`;
+              const pageDetailsResponse = await fetch(pageDetailsUrl, {
+                method: "GET",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              });
+
+              if (pageDetailsResponse.ok) {
+                const pageDetails = await pageDetailsResponse.json();
+                if (pageDetails.instagram_business_account?.id === userId) {
+                  pageId = page.id;
+                  // Save the page ID for future use
+                  if (tokensData) {
+                    tokensData.pageId = pageId;
+                    const filePath = path.join(TOKENS_DIR, `${userId}_tokens.json`);
+                    fs.writeFileSync(filePath, JSON.stringify(tokensData, null, 2));
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("⚠️ Could not fetch page ID:", error);
+        }
+      }
+    }
+
+    if (!pageId) {
+      return res.status(400).json({
+        success: false,
+        error: "Page ID not found. Please reconnect your Instagram account.",
+      });
+    }
+
+    const accountId = pageId;
+
+    // Build query parameters
+    const params = new URLSearchParams({
+      platform: "instagram",
+      access_token: pageAccessToken,
+    });
+
+    // Add fields parameter - default to participants and updated_time if not provided
+    const fieldsParam = fields || "participants,updated_time,messages{from,to}";
+    params.append("fields", fieldsParam);
+
+    if (limit) params.append("limit", limit.toString());
+    if (after) params.append("after", after);
+    if (before) params.append("before", before);
+
+    const conversationsUrl = `https://graph.facebook.com/${graphVersion}/${accountId}/conversations?${params.toString()}`;
+
+    console.log(
+      `📱 Fetching Instagram conversations for ${
+        pageId ? `pageId: ${pageId}` : `userId: ${userId}`
+      }`
+    );
+
+    const response = await fetch(conversationsUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("❌ Failed to fetch Instagram conversations:", errorData);
+      return res.status(response.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to fetch Instagram conversations",
+        details: errorData,
+      });
+    }
+
+    const data = await response.json();
+    console.log(`✅ Successfully fetched ${data.data?.length || 0} Instagram conversations`);
+    console.log("📦 Raw Instagram conversations response:", JSON.stringify(data, null, 2));
+
+    // Process conversations to ensure proper structure
+    const conversations = (data.data || []).map((conversation) => {
+      return {
+        id: conversation.id,
+        participants: conversation.participants || { data: [] },
+        updated_time: conversation.updated_time,
+        messages: conversation.messages || { data: [] },
+      };
+    });
+
+    res.json({
+      success: true,
+      conversations: conversations,
+      paging: data.paging || null,
+      count: conversations.length,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching Instagram conversations:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch Instagram conversations",
+    });
+  }
+});
+
+// Get messages for a specific Instagram conversation
+app.get("/api/instagram/conversations/:userId/:conversationId/messages", async (req, res) => {
+  try {
+    const { userId, conversationId } = req.params;
+    const { limit = 25, after, before, fields } = req.query;
+
+    if (!userId || !conversationId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID and Conversation ID are required",
+      });
+    }
+
+    // Load page access token
+    const pageTokenData = loadPageAccessToken(userId);
+    if (!pageTokenData || !pageTokenData.token) {
+      return res.status(404).json({
+        success: false,
+        error: "Page access token not found or expired. Please reconnect your Instagram account.",
+      });
+    }
+
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+    const pageAccessToken = pageTokenData.token;
+
+    // Build query parameters
+    const params = new URLSearchParams({
+      access_token: pageAccessToken,
+    });
+
+    // Add fields parameter - default to from, message, created_time if not provided
+    const fieldsParam = fields || "id,from,message,created_time";
+    params.append("fields", fieldsParam);
+
+    if (limit) params.append("limit", limit.toString());
+    if (after) params.append("after", after);
+    if (before) params.append("before", before);
+
+    const messagesUrl = `https://graph.facebook.com/${graphVersion}/${conversationId}/messages?${params.toString()}`;
+
+    console.log(`💬 Fetching messages for conversation ${conversationId} (userId: ${userId})`);
+
+    const response = await fetch(messagesUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("❌ Failed to fetch conversation messages:", errorData);
+      return res.status(response.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to fetch conversation messages",
+        details: errorData,
+      });
+    }
+
+    const data = await response.json();
+    console.log(
+      `✅ Successfully fetched ${
+        data.data?.length || 0
+      } messages for conversation ${conversationId}`
+    );
+    console.log("📦 Raw Instagram API response:", JSON.stringify(data, null, 2));
+
+    // Return in Instagram API format (with 'data' field) for consistency
+    const messagesData = data.data || [];
+    console.log("📨 Processed messages data:", messagesData.length, "messages");
+
+    res.json({
+      success: true,
+      conversationId: conversationId,
+      data: messagesData, // Instagram API format - matches Postman response
+      messages: messagesData, // Also include for backward compatibility
+      paging: data.paging || null,
+      count: messagesData.length,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching conversation messages:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch conversation messages",
+    });
+  }
+});
+
+// Send Instagram message
+app.post("/api/instagram/send-message", async (req, res) => {
+  try {
+    const { userId, recipientId, message } = req.body;
+
+    if (!userId || !recipientId || !message) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID, recipient ID, and message are required",
+      });
+    }
+
+    // Load page access token
+    const pageTokenData = loadPageAccessToken(userId);
+    if (!pageTokenData || !pageTokenData.token) {
+      return res.status(404).json({
+        success: false,
+        error: "Page access token not found or expired. Please reconnect your Instagram account.",
+      });
+    }
+
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+    const pageAccessToken = pageTokenData.token;
+
+    // Build the request payload
+    const payload = {
+      recipient: {
+        id: recipientId,
+      },
+      message: {
+        text: message,
+      },
+    };
+
+    // Build the URL with platform parameter
+    const messagesUrl = `https://graph.facebook.com/${graphVersion}/me/messages?platform=instagram&access_token=${pageAccessToken}`;
+
+    console.log(`💬 Sending Instagram message to ${recipientId} (userId: ${userId})`);
+    console.log(`📤 Message payload:`, JSON.stringify(payload, null, 2));
+
+    const response = await fetch(messagesUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${pageAccessToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("❌ Failed to send Instagram message:", errorData);
+      return res.status(response.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to send Instagram message",
+        details: errorData,
+      });
+    }
+
+    const data = await response.json();
+    console.log(`✅ Successfully sent Instagram message:`, data);
+
+    res.json({
+      success: true,
+      messageId: data.message_id || data.id,
+      recipientId: recipientId,
+      data: data,
+    });
+  } catch (error) {
+    console.error("❌ Error sending Instagram message:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to send Instagram message",
+    });
+  }
+});
+
+// Get a specific Instagram conversation details
+app.get("/api/instagram/conversations/:userId/:conversationId", async (req, res) => {
+  try {
+    const { userId, conversationId } = req.params;
+
+    if (!userId || !conversationId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID and Conversation ID are required",
+      });
+    }
+
+    // Load page access token
+    const pageTokenData = loadPageAccessToken(userId);
+    if (!pageTokenData || !pageTokenData.token) {
+      return res.status(404).json({
+        success: false,
+        error: "Page access token not found or expired. Please reconnect your Instagram account.",
+      });
+    }
+
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+    const pageAccessToken = pageTokenData.token;
+
+    const conversationUrl = `https://graph.facebook.com/${graphVersion}/${conversationId}?access_token=${pageAccessToken}`;
+
+    console.log(`📱 Fetching conversation details for ${conversationId} (userId: ${userId})`);
+
+    const response = await fetch(conversationUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("❌ Failed to fetch conversation details:", errorData);
+      return res.status(response.status).json({
+        success: false,
+        error: errorData.error?.message || "Failed to fetch conversation details",
+        details: errorData,
+      });
+    }
+
+    const data = await response.json();
+    console.log(`✅ Successfully fetched conversation details for ${conversationId}`);
+
+    res.json({
+      success: true,
+      conversation: data,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching conversation details:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch conversation details",
+    });
+  }
+});
+
+// Manual token refresh endpoint (for testing or manual refresh)
+app.post("/api/instagram/refresh-tokens", async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (userId) {
+      // Refresh tokens for a specific user
+      console.log(`🔄 Manual token refresh requested for userId: ${userId}`);
+      const success = await refreshUserTokens(userId);
+
+      if (success) {
+        return res.json({
+          success: true,
+          message: `Tokens refreshed successfully for userId: ${userId}`,
+        });
+      } else {
+        return res.status(500).json({
+          success: false,
+          error: `Failed to refresh tokens for userId: ${userId}`,
+        });
+      }
+    } else {
+      // Refresh all tokens that need refresh
+      const refreshInterval = process.env.TOKEN_REFRESH_INTERVAL_DAYS
+        ? parseFloat(process.env.TOKEN_REFRESH_INTERVAL_DAYS)
+        : 0.000694; // Default: 1 minute for testing
+      console.log(
+        `🔄 Manual token refresh requested for all users (last refreshed ${refreshInterval} days (${Math.round(
+          refreshInterval * 24 * 60
+        )} minutes) ago)`
+      );
+      await checkAndRefreshTokens(refreshInterval);
+
+      return res.json({
+        success: true,
+        message: `Token refresh check completed for all users`,
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in manual token refresh:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to refresh tokens",
+    });
+  }
+});
+
 // Get message templates from Facebook Graph API
 app.get("/api/templates", async (req, res) => {
   try {
@@ -1111,6 +2078,398 @@ app.get("/api/templates", async (req, res) => {
     });
   }
 });
+
+/**
+ * Refresh user access token using Facebook Graph API
+ * @param {string} userId - User ID (Instagram account ID)
+ * @param {string} currentToken - Current user access token
+ * @returns {Promise<Object|null>} New token data or null if failed
+ */
+async function refreshUserAccessToken(userId, currentToken) {
+  try {
+    const appId = process.env.REACT_APP_FACEBOOK_APP_ID || "1599198441064709";
+    const appSecret = process.env.FACEBOOK_APP_SECRET || "12a042d6c5d3013e0921c382f84072f7";
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+
+    if (!appSecret) {
+      console.error(`❌ Cannot refresh token for ${userId}: FACEBOOK_APP_SECRET not configured`);
+      return null;
+    }
+
+    console.log(`🔄 Refreshing user access token for userId: ${userId}`);
+
+    // Exchange current token for a new long-lived token
+    const longLivedTokenUrl = `https://graph.facebook.com/${graphVersion}/oauth/access_token`;
+    const longLivedParams = new URLSearchParams({
+      grant_type: "fb_exchange_token",
+      client_id: appId,
+      client_secret: appSecret,
+      fb_exchange_token: currentToken,
+    });
+
+    const longLivedResponse = await fetch(`${longLivedTokenUrl}?${longLivedParams.toString()}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!longLivedResponse.ok) {
+      const errorData = await longLivedResponse.json();
+      console.error(`❌ Failed to refresh user access token for ${userId}:`, errorData);
+      return null;
+    }
+
+    const longLivedData = await longLivedResponse.json();
+    const newToken = longLivedData.access_token;
+    const expiresIn = longLivedData.expires_in || 5184000; // Default to 60 days if not provided
+
+    console.log(`✅ Successfully refreshed user access token for userId: ${userId}`);
+
+    return {
+      token: newToken,
+      expiresIn: expiresIn,
+    };
+  } catch (error) {
+    console.error(`❌ Error refreshing user access token for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Refresh page access token by fetching it again from Facebook Pages API
+ * @param {string} userId - User ID (Instagram account ID)
+ * @param {string} userAccessToken - Current user access token
+ * @returns {Promise<Object|null>} New page token data or null if failed
+ */
+async function refreshPageAccessToken(userId, userAccessToken) {
+  try {
+    const graphVersion = process.env.REACT_APP_GRAPH_VERSION || "v21.0";
+
+    console.log(`🔄 Refreshing page access token for userId: ${userId}`);
+
+    // Get user's Facebook Pages
+    const pagesUrl = `https://graph.facebook.com/${graphVersion}/me/accounts`;
+    const pagesResponse = await fetch(`${pagesUrl}?access_token=${userAccessToken}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!pagesResponse.ok) {
+      const errorData = await pagesResponse.json();
+      console.error(`❌ Failed to fetch pages for ${userId}:`, errorData);
+      return null;
+    }
+
+    const pagesData = await pagesResponse.json();
+    const pages = pagesData.data || [];
+
+    if (pages.length === 0) {
+      console.error(`❌ No Facebook Pages found for userId: ${userId}`);
+      return null;
+    }
+
+    // Find the page with Instagram Business Account matching userId
+    let pageAccessToken = null;
+    let pageId = null;
+
+    for (const page of pages) {
+      const instagramUrl = `https://graph.facebook.com/${graphVersion}/${page.id}?fields=instagram_business_account&access_token=${page.access_token}`;
+      const instagramResponse = await fetch(instagramUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (instagramResponse.ok) {
+        const instagramData = await instagramResponse.json();
+        if (instagramData.instagram_business_account?.id === userId) {
+          pageAccessToken = page.access_token;
+          pageId = page.id;
+          break;
+        }
+      }
+    }
+
+    if (!pageAccessToken) {
+      console.error(`❌ No matching Instagram Business Account found for userId: ${userId}`);
+      return null;
+    }
+
+    // Page access tokens typically have the same expiration as user tokens
+    // We'll use the same expires_in from the user token refresh
+    console.log(`✅ Successfully refreshed page access token for userId: ${userId}`);
+
+    return {
+      token: pageAccessToken,
+      pageId: pageId,
+    };
+  } catch (error) {
+    console.error(`❌ Error refreshing page access token for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Refresh tokens for a specific user
+ * @param {string} userId - User ID (Instagram account ID)
+ * @returns {Promise<boolean>} True if successful, false otherwise
+ */
+async function refreshUserTokens(userId) {
+  try {
+    // Load current tokens
+    const tokensData = loadTokens(userId);
+    const userTokenData = tokensData?.userAccessToken;
+    const existingPageId = tokensData?.pageId;
+
+    if (!userTokenData) {
+      console.log(`⚠️ No user access token found for userId: ${userId}, skipping refresh`);
+      return false;
+    }
+
+    // Refresh user access token first
+    const newUserTokenData = await refreshUserAccessToken(userId, userTokenData.token);
+    if (!newUserTokenData) {
+      console.error(`❌ Failed to refresh user access token for userId: ${userId}`);
+      return false;
+    }
+
+    // Refresh page access token using the new user access token
+    const newPageTokenData = await refreshPageAccessToken(userId, newUserTokenData.token);
+    if (!newPageTokenData) {
+      console.error(`❌ Failed to refresh page access token for userId: ${userId}`);
+      // Still save the user token even if page token refresh fails
+    }
+
+    // Save refreshed tokens (preserve pageId if it exists)
+    if (newPageTokenData) {
+      saveTokens(
+        userId,
+        newUserTokenData.token,
+        newPageTokenData.token,
+        newUserTokenData.expiresIn,
+        existingPageId || newPageTokenData.pageId || null
+      );
+    } else {
+      // If page token refresh failed, only update user token
+      saveUserAccessToken(userId, newUserTokenData.token, newUserTokenData.expiresIn);
+    }
+
+    console.log(`✅ Successfully refreshed all tokens for userId: ${userId}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error refreshing tokens for userId ${userId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Get all user IDs from token files
+ * @returns {Array<string>} Array of user IDs
+ */
+function getAllUserIds() {
+  try {
+    const files = fs.readdirSync(TOKENS_DIR);
+    const userIds = new Set();
+
+    files.forEach((file) => {
+      // Extract userId from filename pattern: {userId}_tokens.json
+      // Also support legacy files: {userId}_user_access_token.json or {userId}_page_access_token.json
+      const match = file.match(/^(\d+)_(?:tokens|user_access_token|page_access_token)\.json$/);
+      if (match) {
+        userIds.add(match[1]);
+      }
+    });
+
+    return Array.from(userIds);
+  } catch (error) {
+    console.error("❌ Error getting user IDs from token files:", error);
+    return [];
+  }
+}
+
+/**
+ * Check and refresh tokens that haven't been refreshed in the specified interval
+ * @param {number} daysSinceLastRefresh - Number of days since last refresh to trigger refresh (default: 50)
+ */
+async function checkAndRefreshTokens(daysSinceLastRefresh = 50) {
+  try {
+    const intervalMinutes = Math.round(daysSinceLastRefresh * 24 * 60);
+    const intervalText =
+      daysSinceLastRefresh < 1 ? `${intervalMinutes} minute(s)` : `${daysSinceLastRefresh} day(s)`;
+
+    console.log(
+      `\n🕐 Starting token refresh check (refreshing tokens last refreshed ${intervalText} ago)...`
+    );
+
+    const userIds = getAllUserIds();
+    console.log(`📋 Found ${userIds.length} user(s) with tokens`);
+
+    if (userIds.length === 0) {
+      console.log("✅ No tokens to check");
+      return;
+    }
+
+    const lastRefreshThreshold = Date.now() - daysSinceLastRefresh * 24 * 60 * 60 * 1000; // milliseconds
+    let refreshedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const userId of userIds) {
+      try {
+        const tokensData = loadTokens(userId);
+        const userTokenData = tokensData?.userAccessToken;
+
+        if (!userTokenData) {
+          console.log(`⚠️ No user token found for userId: ${userId}, skipping`);
+          skippedCount++;
+          continue;
+        }
+
+        // Check if token hasn't been refreshed in ~50 days
+        const lastUpdated = userTokenData.updatedAt || userTokenData.createdAt || Date.now();
+        const needsRefresh = lastUpdated <= lastRefreshThreshold;
+
+        if (needsRefresh) {
+          const timeSinceRefresh = Date.now() - lastUpdated;
+          const minutesSinceRefresh = Math.floor(timeSinceRefresh / (60 * 1000));
+          const daysSinceRefresh = Math.floor(timeSinceRefresh / (24 * 60 * 60 * 1000));
+
+          const timeText =
+            daysSinceLastRefresh < 1
+              ? `${minutesSinceRefresh} minute(s)`
+              : `${daysSinceRefresh} day(s)`;
+          const thresholdText =
+            daysSinceLastRefresh < 1
+              ? `${Math.round(daysSinceLastRefresh * 24 * 60)} minute(s)`
+              : `${daysSinceLastRefresh} day(s)`;
+
+          console.log(
+            `🔄 Token for userId ${userId} needs refresh (last refreshed ${timeText} ago, >= ${thresholdText})`
+          );
+
+          const success = await refreshUserTokens(userId);
+          if (success) {
+            refreshedCount++;
+          } else {
+            failedCount++;
+          }
+        } else {
+          const timeSinceRefresh = Date.now() - lastUpdated;
+          const minutesSinceRefresh = Math.floor(timeSinceRefresh / (60 * 1000));
+          const daysSinceRefresh = Math.floor(timeSinceRefresh / (24 * 60 * 60 * 1000));
+
+          const timeText =
+            daysSinceLastRefresh < 1
+              ? `${minutesSinceRefresh} minute(s)`
+              : `${daysSinceRefresh} day(s)`;
+          const thresholdText =
+            daysSinceLastRefresh < 1
+              ? `${Math.round(daysSinceLastRefresh * 24 * 60)} minute(s)`
+              : `${daysSinceLastRefresh} day(s)`;
+
+          console.log(
+            `✅ Token for userId ${userId} is still valid (refreshed ${timeText} ago, < ${thresholdText})`
+          );
+          skippedCount++;
+        }
+      } catch (error) {
+        console.error(`❌ Error processing tokens for userId ${userId}:`, error);
+        failedCount++;
+      }
+    }
+
+    console.log(
+      `\n📊 Token refresh summary: ${refreshedCount} refreshed, ${skippedCount} skipped, ${failedCount} failed`
+    );
+  } catch (error) {
+    console.error("❌ Error in token refresh check:", error);
+  }
+}
+
+// Track last cron job execution time
+const LAST_CRON_EXECUTION_FILE = path.join(__dirname, "tokens", ".last_cron_execution.json");
+
+/**
+ * Get the last cron job execution time
+ * @returns {number|null} Last execution timestamp or null if never executed
+ */
+function getLastCronExecution() {
+  try {
+    if (fs.existsSync(LAST_CRON_EXECUTION_FILE)) {
+      const data = fs.readFileSync(LAST_CRON_EXECUTION_FILE, "utf8");
+      const json = JSON.parse(data);
+      return json.lastExecution || null;
+    }
+    return null;
+  } catch (error) {
+    console.error("❌ Error reading last cron execution time:", error);
+    return null;
+  }
+}
+
+/**
+ * Save the current cron job execution time
+ */
+function saveLastCronExecution() {
+  try {
+    const data = {
+      lastExecution: Date.now(),
+      lastExecutionDate: new Date().toISOString(),
+    };
+    fs.writeFileSync(LAST_CRON_EXECUTION_FILE, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error("❌ Error saving last cron execution time:", error);
+  }
+}
+
+// Set to 50 days - cron job will only execute if 50 days have passed since last execution
+// You can customize via TOKEN_REFRESH_INTERVAL_DAYS environment variable
+const DAYS_SINCE_LAST_REFRESH = process.env.TOKEN_REFRESH_INTERVAL_DAYS
+  ? parseFloat(process.env.TOKEN_REFRESH_INTERVAL_DAYS)
+  : 50; // Default: 50 days
+
+// Setup cron job to check weekly (but only executes if 50 days have passed)
+// Cron format: minute hour day month dayOfWeek
+// "0 2 * * 0" means: at 2:00 AM every Sunday
+// The job checks if 50 days have passed since last execution, and only then runs the refresh
+// You can customize via TOKEN_REFRESH_CRON environment variable
+const CRON_SCHEDULE = process.env.TOKEN_REFRESH_CRON || "0 2 * * 0"; // Default: weekly on Sunday at 2 AM
+
+cron.schedule(CRON_SCHEDULE, async () => {
+  console.log(`\n⏰ Cron job check triggered at ${new Date().toISOString()}`);
+
+  const lastExecution = getLastCronExecution();
+  const now = Date.now();
+  const daysSinceLastExecution = lastExecution
+    ? (now - lastExecution) / (24 * 60 * 60 * 1000)
+    : Infinity;
+
+  if (lastExecution && daysSinceLastExecution < DAYS_SINCE_LAST_REFRESH) {
+    console.log(
+      `⏭️  Skipping execution - last run was ${Math.floor(
+        daysSinceLastExecution
+      )} days ago (need ${DAYS_SINCE_LAST_REFRESH} days)`
+    );
+    return;
+  }
+
+  console.log(
+    `✅ Executing token refresh (${
+      lastExecution ? `${Math.floor(daysSinceLastExecution)} days` : "first run"
+    } since last execution)`
+  );
+
+  await checkAndRefreshTokens(DAYS_SINCE_LAST_REFRESH);
+  saveLastCronExecution();
+});
+
+// Also run immediately on startup (optional - comment out if not needed)
+// Uncomment the line below if you want to check tokens on server startup
+// checkAndRefreshTokens(DAYS_SINCE_LAST_REFRESH);
 
 // Socket.io connection handler (must be before server starts)
 io.on("connection", (socket) => {
