@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  MessageSquare,
-  Instagram,
-} from "lucide-react";
+import { MessageSquare, Instagram } from "lucide-react";
 import whatsappAPI from "../../services/whatsapp.api";
 import { useSocket } from "../../contexts/SocketContext";
 import { markMessagesAsRead } from "../../utils/readMessages.utils";
@@ -765,7 +762,7 @@ const Messages = ({ onSendMessage }) => {
               setSelectedContact(null);
               navigate("/messages");
             }}
-            disabled={!instagramConnected}
+            // disabled={!instagramConnected}
             className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
               activeTab === "instagram"
                 ? "bg-slate-700 text-white border-b-2 border-pink-500"

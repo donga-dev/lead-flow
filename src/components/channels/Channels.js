@@ -310,6 +310,8 @@ const Channels = () => {
           console.log(
             "⚠️ Network error checking Instagram token, keeping current connection status"
           );
+        } finally {
+          setCheckingConnection(false);
         }
       } else {
         console.log("No Instagram userId found in localStorage");
@@ -317,8 +319,6 @@ const Channels = () => {
           prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
         );
       }
-
-      setCheckingConnection(false);
     };
 
     verifyConnections();
