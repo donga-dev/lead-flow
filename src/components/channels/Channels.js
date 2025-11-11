@@ -319,6 +319,7 @@ const Channels = () => {
           prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
         );
       }
+      setCheckingConnection(false);
     };
 
     verifyConnections();
