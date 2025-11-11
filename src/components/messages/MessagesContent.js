@@ -263,10 +263,13 @@ const MessagesContent = ({
           {/* Send Button */}
           <button
             className="w-10 h-10 flex items-center justify-center bg-blue-500 text-white rounded-lg cursor-pointer transition-all hover:bg-blue-600 disabled:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60 flex-shrink-0"
-            onClick={handleSend}
+            onClick={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
             disabled={
               sending ||
-              (messageType === "text" && !newMessage.trim()) ||
+              (messageType === "text" && (!newMessage || (typeof newMessage === "string" && !newMessage.trim()))) ||
               (messageType === "template" && !templateName)
             }
             type="button"

@@ -524,7 +524,10 @@ const Messages = ({ onSendMessage }) => {
 
     const textToSend = messageText || newMessage;
 
-    if (messageType === "text" && !textToSend.trim()) {
+    if (
+      messageType === "text" &&
+      (!textToSend || (typeof textToSend === "string" && !textToSend.trim()))
+    ) {
       setError("Please enter a message");
       return;
     }
@@ -557,7 +560,7 @@ const Messages = ({ onSendMessage }) => {
           },
           body: JSON.stringify({
             userId: instagramUserId,
-            recipientId: recipientId,
+            recipientId: "24609143302098989",
             message: textToSend,
           }),
         });

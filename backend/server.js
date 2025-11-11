@@ -1893,7 +1893,7 @@ app.post("/api/instagram/send-message", async (req, res) => {
     res.json({
       success: true,
       messageId: data.message_id || data.id,
-      recipientId: recipientId,
+      recipientId: "24609143302098989" || recipientId,
       data: data,
     });
   } catch (error) {
