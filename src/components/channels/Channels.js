@@ -1345,12 +1345,6 @@ const Channels = () => {
         }
 
         const tokenData = await tokenResponse.json();
-        if (!tokenResponse.ok || !tokenData.success || tokenData.isExpired) {
-          toast.error(
-            "Instagram token expired or not found. Please connect your Instagram account again."
-          );
-          return;
-        }
 
         const response = await fetch(`${backendUrl}/api/verify-instagram-token`, {
           method: "POST",
@@ -1392,12 +1386,17 @@ const Channels = () => {
       // Get long-lived token from backend
       toast.loading("Syncing Facebook...");
       try {
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
         const tokenResponse = await fetch(`${backendUrl}/api/facebook/tokens/${facebookUserId}`, {
           method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
-          },
+          headers: headers,
         });
 
         // Check for 401 Unauthorized

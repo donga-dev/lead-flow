@@ -233,6 +233,19 @@
       "direction": "incoming",
       "status": "received",
       "platform": "facebook"
+    },
+    {
+      "id": "m_LtVl-wFH9yaiXaWFVJDY-Mh_UP8wfMtPj2sGn4eR5ZbmhOKe9BXF_EdTepnQx5Unv3edj8REhbqomnMvMuNv3w",
+      "from": "32605594712388446",
+      "to": "me",
+      "text": {
+        "body": "vnbvn"
+      },
+      "type": "text",
+      "timestamp": 1764049272315000,
+      "direction": "incoming",
+      "status": "received",
+      "platform": "facebook"
     }
   ]
 }
