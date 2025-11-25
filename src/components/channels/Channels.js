@@ -10,6 +10,8 @@ import {
   CircleCheckBig,
   CircleX,
   Instagram,
+  Linkedin,
+  Facebook,
 } from "lucide-react";
 import WhatsAppConnectModal from "./WhatsAppConnectModal";
 
@@ -31,8 +33,25 @@ const Channels = () => {
     "pages_read_engagement",
     "pages_show_list",
     "business_management",
+    "ads_management",
+    "ads_read",
+    "business_management",
+    "pages_manage_ads",
   ].join(",");
 
+  const facebookBusinessScopes = [
+    "email",
+    "public_profile",
+    "business_management",
+    "pages_read_engagement",
+    "pages_show_list",
+    "ads_management",
+    "ads_read",
+    "read_insights",
+    "pages_read_engagement",
+    "pages_manage_metadata",
+    "pages_messaging",
+  ].join(",");
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(true);
 
@@ -67,6 +86,24 @@ const Channels = () => {
       leads: "",
       lastSync: "1/18/2025",
       logo: <Instagram className="w-8 h-8 text-pink-500" />,
+    },
+    {
+      id: "linkedin",
+      name: "LinkedIn",
+      subtitle: "LinkedIn OAuth",
+      connected: false, // Start as disconnected, verify on mount
+      leads: "",
+      lastSync: "1/18/2025",
+      logo: <Linkedin className="w-8 h-8 text-blue-500" />,
+    },
+    {
+      id: "facebook",
+      name: "Facebook",
+      subtitle: "Facebook OAuth",
+      connected: false, // Start as disconnected, verify on mount
+      leads: "",
+      lastSync: "1/18/2025",
+      logo: <Facebook className="w-8 h-8 text-blue-600" />,
     },
   ]);
 
@@ -106,9 +143,149 @@ const Channels = () => {
     lastSync: getLastSyncDate(),
   };
 
+  // Handle LinkedIn OAuth callback
+  useEffect(() => {
+    const handleLinkedInCallback = async () => {
+      // Check if we're coming back from LinkedIn OAuth
+      const error = searchParams.get("error");
+      const errorDescription = searchParams.get("error_description");
+      const linkedinToken = searchParams.get("linkedin_token");
+      const linkedinConnected = searchParams.get("linkedin_connected");
+      const linkedinAlreadyConnected = searchParams.get("linkedin_already_connected");
+
+      // Check if this is a LinkedIn callback (has linkedin_token or linkedin_connected param)
+      // LinkedIn redirects to backend first, then backend redirects to frontend with linkedin_token
+      // Only process if we have LinkedIn-specific parameters
+      const isLinkedInCallback = linkedinToken || linkedinConnected || linkedinAlreadyConnected;
+
+      // If no LinkedIn-specific parameters and no error, skip
+      if (!isLinkedInCallback && !error) {
+        return;
+      }
+
+      // Handle LinkedIn callback (backend already saved token to file)
+      if (
+        (linkedinConnected || linkedinAlreadyConnected) &&
+        window.location.pathname === "/channels"
+      ) {
+        // If already connected, just verify and update UI
+        if (linkedinAlreadyConnected) {
+          // Wait a bit then check connection
+          setTimeout(() => {
+            checkLinkedInConnection();
+          }, 500);
+          setSearchParams({});
+          return;
+        }
+
+        // Wait a bit for backend to save token, then verify
+        setTimeout(async () => {
+          try {
+            // Verify token with backend (token is stored in file on backend)
+            const backendUrl =
+              process.env.REACT_APP_BACKEND_URL ||
+              "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+            // Get authToken from localStorage
+            const authToken = localStorage.getItem("authToken");
+            const headers = {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            };
+
+            // Add Authorization header if token exists
+            if (authToken) {
+              headers["Authorization"] = `Bearer ${authToken}`;
+            }
+
+            const tokenResponse = await fetch(`${backendUrl}/api/linkedin/token`, {
+              method: "GET",
+              headers: headers,
+            });
+
+            const tokenData = await tokenResponse.json();
+
+            if (tokenData.success && tokenData.connected) {
+              localStorage.setItem("linkedin_connected", "true");
+
+              // Get user name from response
+              const userName =
+                tokenData.userInfo?.name ||
+                tokenData.userInfo?.given_name ||
+                tokenData.userInfo?.localizedFirstName ||
+                tokenData.userInfo?.firstName ||
+                null;
+
+              if (userName) {
+                localStorage.setItem("linkedin_user_name", userName);
+              }
+
+              toast.success("LinkedIn connected successfully!", { autoClose: 3000 });
+
+              // Update channel status with user name in subtitle
+              setChannels((prev) =>
+                prev.map((ch) =>
+                  ch.id === "linkedin"
+                    ? {
+                        ...ch,
+                        connected: true,
+                        subtitle: userName ? `Connected as ${userName}` : "LinkedIn OAuth",
+                      }
+                    : ch
+                )
+              );
+
+              // Mark that LinkedIn was just connected - this will trigger verification for LinkedIn only
+              localStorage.setItem("verify_platform", "linkedin");
+            } else {
+              toast.warning("LinkedIn connection failed. Please try again.", {
+                autoClose: 5000,
+              });
+            }
+
+            // Clean up URL by removing query parameters
+            setSearchParams({});
+          } catch (error) {
+            console.error("Error verifying LinkedIn connection:", error);
+            toast.error("Failed to verify LinkedIn connection. Please try again.", {
+              autoClose: 5000,
+            });
+            setSearchParams({});
+          }
+        }, 1000); // Wait 1 second for backend to save token
+      } else if (error) {
+        // Handle OAuth errors (only if it's a LinkedIn error, not Instagram)
+        // LinkedIn errors don't have error_reason, Instagram/Facebook errors do
+        if (!searchParams.get("error_reason")) {
+          toast.error(
+            errorDescription || error || "Failed to connect LinkedIn. Please try again.",
+            {
+              autoClose: 5000,
+            }
+          );
+          setSearchParams({});
+        }
+      }
+    };
+
+    handleLinkedInCallback();
+  }, [searchParams, setSearchParams]);
+
   // Handle Instagram OAuth callback
   useEffect(() => {
     const handleInstagramCallback = async () => {
+      // IMPORTANT: Check for LinkedIn callback FIRST to prevent interference
+      // LinkedIn redirects to backend first, then backend redirects to frontend with linkedin_token
+      const linkedinToken = searchParams.get("linkedin_token");
+      const linkedinConnected = searchParams.get("linkedin_connected");
+      const linkedinAlreadyConnected = searchParams.get("linkedin_already_connected");
+
+      // Skip if this is a LinkedIn callback (LinkedIn has specific parameters)
+      if (linkedinToken || linkedinConnected || linkedinAlreadyConnected) {
+        console.log("⏭️ Skipping Instagram handler - this is a LinkedIn callback");
+        return; // Let LinkedIn handler process this
+      }
+
       const code = searchParams.get("code");
       const error = searchParams.get("error");
       const errorReason = searchParams.get("error_reason");
@@ -132,6 +309,14 @@ const Channels = () => {
       }
 
       // Check if we have an authorization code
+      // Also verify this is an Instagram OAuth callback by checking localStorage
+      const oauthPlatform = localStorage.getItem("oauth_platform");
+      if (code && oauthPlatform !== "instagram") {
+        // This is not an Instagram callback, skip it
+        console.log("⏭️ Skipping Instagram handler - OAuth was for:", oauthPlatform);
+        return;
+      }
+
       if (code) {
         try {
           // Get redirect URI (should match the one used in the OAuth request)
@@ -143,17 +328,40 @@ const Channels = () => {
             process.env.REACT_APP_BACKEND_URL ||
             "https://unexigent-felisha-calathiform.ngrok-free.dev";
 
+          // Get userId and authToken from localStorage
+          const userStr = localStorage.getItem("user");
+          const user = userStr ? JSON.parse(userStr) : null;
+          const userId = user?.id || null;
+          const authToken = localStorage.getItem("authToken");
+
+          console.log("🔄 Calling Instagram exchange-token API...");
+          const headers = {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          };
+
+          // Add Authorization header if token exists
+          if (authToken) {
+            headers["Authorization"] = `Bearer ${authToken}`;
+          }
+
           const response = await fetch(`${backendUrl}/api/instagram/exchange-token`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "ngrok-skip-browser-warning": "true",
-            },
+            headers: headers,
             body: JSON.stringify({
               code: code,
               redirectUri: currentRedirectUri,
+              userId: userId,
             }),
           });
+
+          console.log("Instagram API response status:", response.status);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Instagram API error:", errorText);
+            throw new Error(`API error: ${response.status} - ${errorText}`);
+          }
 
           const data = await response.json();
 
@@ -189,16 +397,43 @@ const Channels = () => {
               prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
             );
 
+            // Mark that Instagram was just connected - this will trigger verification for Instagram only
+            localStorage.setItem("verify_platform", "instagram");
+            // Clean up OAuth platform marker
+            localStorage.removeItem("oauth_platform");
+
             // Clean up URL by removing query parameters
             setSearchParams({});
           } else {
             throw new Error(data.error || "Failed to exchange code for access token");
           }
         } catch (error) {
-          console.error("Error exchanging code for token:", error);
-          toast.error(error.message || "Failed to connect Instagram. Please try again.", {
-            autoClose: 5000,
-          });
+          console.error("❌ Error exchanging code for token:", error);
+          // Check if it's a CORS error - this might happen if LinkedIn callback is processed as Instagram
+          if (
+            error.message &&
+            (error.message.includes("CORS") || error.message.includes("Failed to fetch"))
+          ) {
+            console.error(
+              "🚫 CORS error detected - checking if this is actually a LinkedIn callback"
+            );
+            // Check again for LinkedIn params (they might have been added after initial check)
+            const hasLinkedInParams =
+              searchParams.get("linkedin_token") ||
+              searchParams.get("linkedin_connected") ||
+              searchParams.get("linkedin_already_connected");
+            if (hasLinkedInParams) {
+              console.log("✅ This is a LinkedIn callback - skipping Instagram error");
+              return; // Don't show error for LinkedIn callbacks
+            }
+            toast.error("CORS error: Please check your backend CORS configuration.", {
+              autoClose: 5000,
+            });
+          } else {
+            toast.error(error.message || "Failed to connect Instagram. Please try again.", {
+              autoClose: 5000,
+            });
+          }
           // Clean up URL
           setSearchParams({});
         }
@@ -208,12 +443,303 @@ const Channels = () => {
     handleInstagramCallback();
   }, [searchParams, setSearchParams]);
 
-  // Verify WhatsApp and Instagram connection status on component mount
+  // Handle Facebook OAuth callback
+  useEffect(() => {
+    const handleFacebookCallback = async () => {
+      const code = searchParams.get("code");
+      const error = searchParams.get("error");
+      const errorReason = searchParams.get("error_reason");
+      const errorDescription = searchParams.get("error_description");
+
+      // If no OAuth parameters, skip callback handling
+      if (!code && !error) {
+        return;
+      }
+
+      // Handle OAuth errors
+      if (error) {
+        console.error("OAuth error:", { error, errorReason, errorDescription });
+        toast.error(
+          errorDescription || errorReason || "Failed to connect Facebook. Please try again.",
+          { autoClose: 5000 }
+        );
+        // Clean up URL
+        setSearchParams({});
+        return;
+      }
+
+      // Check if we have an authorization code
+      // Also verify this is a Facebook OAuth callback by checking localStorage
+      const oauthPlatform = localStorage.getItem("oauth_platform");
+      if (code && oauthPlatform !== "facebook") {
+        // This is not a Facebook callback, skip it
+        console.log("⏭️ Skipping Facebook handler - OAuth was for:", oauthPlatform);
+        return;
+      }
+
+      if (code) {
+        try {
+          // Get redirect URI (should match the one used in the OAuth request)
+          const currentRedirectUri =
+            process.env.REACT_APP_REDIRECT_URI || window.location.origin + "/channels";
+
+          // Exchange code for access token via backend
+          const backendUrl =
+            process.env.REACT_APP_BACKEND_URL ||
+            "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+          // Get userId and authToken from localStorage
+          const userStr = localStorage.getItem("user");
+          const user = userStr ? JSON.parse(userStr) : null;
+          const userId = user?.id || null;
+          const authToken = localStorage.getItem("authToken");
+
+          console.log("🔄 Calling Facebook exchange-token API...");
+          const headers = {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          };
+
+          // Add Authorization header if token exists
+          if (authToken) {
+            headers["Authorization"] = `Bearer ${authToken}`;
+          }
+
+          const response = await fetch(`${backendUrl}/api/facebook/exchange-token`, {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify({
+              code: code,
+              redirectUri: currentRedirectUri,
+              userId: userId,
+            }),
+          });
+
+          console.log("Facebook API response status:", response.status);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Facebook API error:", errorText);
+            throw new Error(`API error: ${response.status} - ${errorText}`);
+          }
+
+          const data = await response.json();
+
+          if (response.ok && data.success && data.access_token) {
+            // Tokens are now stored on the backend in JSON files
+            // Only store userId (Facebook user ID) in localStorage for reference
+            if (data.facebook_user_id) {
+              const userId = data.facebook_user_id;
+              localStorage.setItem("facebook_user_id", userId);
+
+              // Store account info for display purposes only
+              if (data.facebook_user_name) {
+                localStorage.setItem("facebook_user_name", data.facebook_user_name);
+              }
+              if (data.facebook_page_id) {
+                localStorage.setItem("facebook_page_id", data.facebook_page_id);
+              }
+              if (data.facebook_page_name) {
+                localStorage.setItem("facebook_page_name", data.facebook_page_name);
+              }
+
+              // Remove old token storage from localStorage (cleanup)
+              localStorage.removeItem("facebook_user_access_token");
+              localStorage.removeItem("facebook_page_access_token");
+              localStorage.removeItem("facebook_token_type");
+              localStorage.removeItem("facebook_token_expiry");
+            }
+
+            toast.success("Facebook connected successfully!", { autoClose: 3000 });
+
+            // Update channel status with user name in subtitle
+            const userName = data.facebook_user_name || null;
+            setChannels((prev) =>
+              prev.map((ch) =>
+                ch.id === "facebook"
+                  ? {
+                      ...ch,
+                      connected: true,
+                      subtitle: userName ? `Connected as ${userName}` : "Facebook OAuth",
+                    }
+                  : ch
+              )
+            );
+
+            // Mark that Facebook was just connected - this will trigger verification for Facebook only
+            localStorage.setItem("verify_platform", "facebook");
+            // Clean up OAuth platform marker
+            localStorage.removeItem("oauth_platform");
+
+            // Clean up URL by removing query parameters
+            setSearchParams({});
+          } else {
+            throw new Error(data.error || "Failed to exchange code for access token");
+          }
+        } catch (error) {
+          console.error("❌ Error exchanging code for token:", error);
+          // Check if it's a CORS error - this might happen if LinkedIn callback is processed as Instagram
+          if (
+            error.message &&
+            (error.message.includes("CORS") || error.message.includes("Failed to fetch"))
+          ) {
+            console.error(
+              "🚫 CORS error detected - checking if this is actually a LinkedIn callback"
+            );
+            // Check again for LinkedIn params (they might have been added after initial check)
+            const hasLinkedInParams =
+              searchParams.get("linkedin_token") ||
+              searchParams.get("linkedin_connected") ||
+              searchParams.get("linkedin_already_connected");
+            if (hasLinkedInParams) {
+              console.log("✅ This is a LinkedIn callback - skipping LinkedIn error");
+              return; // Don't show error for LinkedIn callbacks
+            }
+            toast.error("CORS error: Please check your backend CORS configuration.", {
+              autoClose: 5000,
+            });
+          } else {
+            toast.error(error.message || "Failed to connect Facebook. Please try again.", {
+              autoClose: 5000,
+            });
+          }
+          // Clean up URL
+          setSearchParams({});
+        }
+      }
+    };
+
+    handleFacebookCallback();
+  }, [searchParams, setSearchParams]);
+
+  // Verify connection status on component mount or after OAuth callback
   useEffect(() => {
     const verifyConnections = async () => {
       setCheckingConnection(true);
       const backendUrl =
         process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+      // Check if a specific platform was just connected
+      const verifyPlatform = localStorage.getItem("verify_platform");
+
+      if (verifyPlatform) {
+        // Only verify the specific platform that was just connected
+        console.log(`🔍 Verifying ${verifyPlatform} connection only...`);
+
+        if (verifyPlatform === "instagram") {
+          try {
+            const authToken = localStorage.getItem("authToken");
+            if (!authToken) {
+              setCheckingConnection(false);
+              return;
+            }
+
+            const headers = {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+              Authorization: `Bearer ${authToken}`,
+            };
+
+            const response = await fetch(`${backendUrl}/api/integrations`, {
+              method: "GET",
+              headers: headers,
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const instagramIntegration = data.integrations?.instagram;
+
+              if (
+                instagramIntegration &&
+                instagramIntegration.connected &&
+                !instagramIntegration.tokenExpired &&
+                instagramIntegration.platformUserId
+              ) {
+                // Store in localStorage for backward compatibility
+                localStorage.setItem("instagram_user_id", instagramIntegration.platformUserId);
+                setChannels((prev) =>
+                  prev.map((ch) =>
+                    ch.id === "instagram"
+                      ? {
+                          ...ch,
+                          connected: true,
+                          subtitle: instagramIntegration.username
+                            ? `Connected as ${instagramIntegration.username}`
+                            : "Instagram OAuth",
+                        }
+                      : ch
+                  )
+                );
+              }
+            }
+          } catch (error) {
+            console.error("❌ Error verifying Instagram connection:", error);
+          }
+        } else if (verifyPlatform === "facebook") {
+          try {
+            const authToken = localStorage.getItem("authToken");
+            if (!authToken) {
+              setCheckingConnection(false);
+              return;
+            }
+
+            const headers = {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+              Authorization: `Bearer ${authToken}`,
+            };
+
+            const response = await fetch(`${backendUrl}/api/integrations`, {
+              method: "GET",
+              headers: headers,
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const facebookIntegration = data.integrations?.facebook;
+
+              if (
+                facebookIntegration &&
+                facebookIntegration.connected &&
+                !facebookIntegration.tokenExpired &&
+                facebookIntegration.platformUserId
+              ) {
+                // Store in localStorage for backward compatibility
+                localStorage.setItem("facebook_user_id", facebookIntegration.platformUserId);
+                if (facebookIntegration.pageId) {
+                  localStorage.setItem("facebook_page_id", facebookIntegration.pageId);
+                }
+                setChannels((prev) =>
+                  prev.map((ch) =>
+                    ch.id === "facebook"
+                      ? {
+                          ...ch,
+                          connected: true,
+                          subtitle: facebookIntegration.userName
+                            ? `Connected as ${facebookIntegration.userName}`
+                            : "Facebook OAuth",
+                        }
+                      : ch
+                  )
+                );
+              }
+            }
+          } catch (error) {
+            console.error("❌ Error verifying Facebook connection:", error);
+          }
+        } else if (verifyPlatform === "linkedin") {
+          await checkLinkedInConnection();
+        }
+
+        // Clear the verify_platform flag after verification
+        localStorage.removeItem("verify_platform");
+        setCheckingConnection(false);
+        return; // Exit early, don't verify all platforms
+      }
+
+      // No specific platform to verify - verify all platforms (normal mount scenario)
+      console.log("🔍 Verifying all platform connections...");
+
       // Verify WhatsApp connection
       const whatsappToken = localStorage.getItem("whatsapp_token");
       if (!whatsappToken) {
@@ -252,84 +778,146 @@ const Channels = () => {
         }
       }
 
-      // Verify Instagram connection (tokens stored on backend)
-      const instagramUserId = localStorage.getItem("instagram_user_id");
-      if (instagramUserId) {
-        // Check if token exists and is valid on backend
-        try {
-          const response = await fetch(
-            `${backendUrl}/api/instagram/tokens/page/${instagramUserId}`,
-            {
-              method: "GET",
-              headers: {
-                "Content-Type": "application/json",
-                "ngrok-skip-browser-warning": "true",
-              },
-            }
-          );
+      // Get authToken from localStorage
+      const authToken = localStorage.getItem("authToken");
+      if (!authToken) {
+        console.log("No auth token found, skipping connection verification");
+        setCheckingConnection(false);
+        return;
+      }
 
-          if (!response.ok) {
-            console.error(
-              `❌ Instagram token API error: ${response.status} ${response.statusText}`
-            );
-            setChannels((prev) =>
-              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
-            );
-            return;
+      // Get all integrations for the logged-in user
+      try {
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+          Authorization: `Bearer ${authToken}`,
+        };
+
+        const integrationsResponse = await fetch(`${backendUrl}/api/integrations`, {
+          method: "GET",
+          headers: headers,
+        });
+
+        if (integrationsResponse.ok) {
+          const integrationsData = await integrationsResponse.json();
+          const integrations = integrationsData.integrations || {};
+
+          console.log("📊 Integrations data received:", integrations);
+
+          // Update all channels at once to avoid race conditions
+          setChannels((prev) => {
+            const updated = prev.map((ch) => {
+              if (ch.id === "instagram") {
+                const instagram = integrations.instagram;
+                if (instagram && instagram.connected && !instagram.tokenExpired) {
+                  console.log("✅ Setting Instagram as connected");
+                  return {
+                    ...ch,
+                    connected: true,
+                    subtitle: instagram.username
+                      ? `Connected as ${instagram.username}`
+                      : "Instagram OAuth",
+                  };
+                } else {
+                  console.log("❌ Setting Instagram as disconnected");
+                  return { ...ch, connected: false };
+                }
+              }
+
+              if (ch.id === "facebook") {
+                const facebook = integrations.facebook;
+                if (facebook && facebook.connected && !facebook.tokenExpired) {
+                  console.log("✅ Setting Facebook as connected");
+                  return {
+                    ...ch,
+                    connected: true,
+                    subtitle: facebook.userName
+                      ? `Connected as ${facebook.userName}`
+                      : "Facebook OAuth",
+                  };
+                } else {
+                  console.log("❌ Setting Facebook as disconnected");
+                  return { ...ch, connected: false };
+                }
+              }
+
+              if (ch.id === "linkedin") {
+                const linkedin = integrations.linkedin;
+                if (linkedin && linkedin.connected && !linkedin.tokenExpired) {
+                  console.log("✅ Setting LinkedIn as connected");
+                  return { ...ch, connected: true };
+                } else {
+                  console.log("❌ Setting LinkedIn as disconnected");
+                  return { ...ch, connected: false };
+                }
+              }
+
+              return ch;
+            });
+
+            console.log("🔄 Updated channels state:", updated);
+            return updated;
+          });
+
+          // Store platformUserIds in localStorage for backward compatibility
+          if (integrations.instagram?.platformUserId) {
+            localStorage.setItem("instagram_user_id", integrations.instagram.platformUserId);
+          }
+          if (integrations.facebook?.platformUserId) {
+            localStorage.setItem("facebook_user_id", integrations.facebook.platformUserId);
+            if (integrations.facebook.pageId) {
+              localStorage.setItem("facebook_page_id", integrations.facebook.pageId);
+            }
           }
 
-          const data = await response.json();
-          console.log("Instagram token check response:", data);
-
-          if (data.success && !data.isExpired) {
-            // Token is valid
-            console.log("✅ Instagram token is valid and not expired");
-            setChannels((prev) =>
-              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: true } : ch))
-            );
-          } else {
-            // Token expired or not found
-            console.log(
-              `❌ Instagram token issue - success: ${data.success}, isExpired: ${data.isExpired}, error: ${data.error}`
-            );
-            if (data.error && data.error.includes("not found")) {
-              // Token file doesn't exist, clean up localStorage
-              localStorage.removeItem("instagram_user_id");
-              localStorage.removeItem("instagram_account_id");
-              localStorage.removeItem("instagram_username");
-              localStorage.removeItem("instagram_page_id");
-            }
-            setChannels((prev) =>
-              prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
-            );
-          }
-        } catch (error) {
-          console.error("❌ Error checking Instagram token:", error);
-          // Don't set to disconnected on network errors - might be temporary
-          // Only set to disconnected if we're sure the token is invalid
-          console.log(
-            "⚠️ Network error checking Instagram token, keeping current connection status"
+          // Mark checking as complete after successful update
+          setCheckingConnection(false);
+        } else {
+          console.error("Failed to get integrations:", integrationsResponse.status);
+          // Set all to disconnected if API call fails
+          setChannels((prev) =>
+            prev.map((ch) =>
+              ["instagram", "facebook", "linkedin"].includes(ch.id)
+                ? { ...ch, connected: false }
+                : ch
+            )
           );
-        } finally {
           setCheckingConnection(false);
         }
-      } else {
-        console.log("No Instagram userId found in localStorage");
+      } catch (error) {
+        console.error("❌ Error checking integrations:", error);
+        // Set all to disconnected on error
         setChannels((prev) =>
-          prev.map((ch) => (ch.id === "instagram" ? { ...ch, connected: false } : ch))
+          prev.map((ch) =>
+            ["instagram", "facebook", "linkedin"].includes(ch.id) ? { ...ch, connected: false } : ch
+          )
         );
+        setCheckingConnection(false);
       }
+
+      // Note: LinkedIn connection check is now handled by integrations API above
+      // Only call checkLinkedInConnection if needed for additional verification
+      // await checkLinkedInConnection();
+
+      // All platform connections are now handled by the integrations API above
+      // No need for legacy localStorage-based checks
+
       setCheckingConnection(false);
     };
 
     verifyConnections();
-  }, []); // Run only on mount
+  }, [searchParams]); // Run only on mount
 
   const handleConnect = (channelId) => {
     if (channelId === "whatsapp") {
       setShowWhatsAppModal(true);
     } else if (channelId === "instagram") {
       handleInstagramConnect();
+    } else if (channelId === "linkedin") {
+      handleLinkedInConnect();
+    } else if (channelId === "facebook") {
+      handleFacebookConnect();
     }
   };
 
@@ -341,10 +929,133 @@ const Channels = () => {
   };
 
   const handleInstagramConnect = () => {
+    // Store which platform is initiating OAuth
+    localStorage.setItem("oauth_platform", "instagram");
     const state = Math.random().toString(36).substring(2);
     const encodedRedirectUri = encodeURIComponent(redirectUri);
     // Use Facebook OAuth for Instagram Business API (this is the standard way)
     const authUrl = `https://www.facebook.com/${graphVersion}/dialog/oauth?client_id=${appId}&redirect_uri=${encodedRedirectUri}&scope=${instagramScopes}&response_type=code&state=${state}`;
+    window.location.href = authUrl;
+  };
+
+  // Function to check LinkedIn connection status
+  const checkLinkedInConnection = async () => {
+    const backendUrl =
+      process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+    try {
+      // Get authToken from localStorage
+      const authToken = localStorage.getItem("authToken");
+      const headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      };
+
+      // Add Authorization header if token exists
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+
+      // Check token from backend file (not localStorage)
+      const linkedInResponse = await fetch(`${backendUrl}/api/linkedin/token`, {
+        method: "GET",
+        headers: headers,
+      });
+
+      // Check for 401 Unauthorized
+      if (linkedInResponse.status === 401) {
+        setCheckingConnection(false);
+        console.log("❌ LinkedIn token unauthorized (401)");
+        // Note: handleDisconnect will be called from handleSync if needed
+        // For now, just mark as disconnected
+        localStorage.removeItem("linkedin_connected");
+        localStorage.removeItem("linkedin_user_name");
+        setChannels((prev) =>
+          prev.map((ch) =>
+            ch.id === "linkedin" ? { ...ch, connected: false, subtitle: "LinkedIn OAuth" } : ch
+          )
+        );
+        return false;
+      }
+
+      const linkedInData = await linkedInResponse.json();
+      if (linkedInData.success && linkedInData.connected) {
+        // Get user name from response or localStorage
+        const userName =
+          linkedInData.userInfo?.name ||
+          linkedInData.userInfo?.given_name ||
+          linkedInData.userInfo?.localizedFirstName ||
+          linkedInData.userInfo?.firstName ||
+          localStorage.getItem("linkedin_user_name") ||
+          null;
+
+        if (userName && !localStorage.getItem("linkedin_user_name")) {
+          localStorage.setItem("linkedin_user_name", userName);
+        }
+
+        setChannels((prev) =>
+          prev.map((ch) =>
+            ch.id === "linkedin"
+              ? {
+                  ...ch,
+                  connected: true,
+                  subtitle: userName ? `Connected as ${userName}` : "LinkedIn OAuth",
+                }
+              : ch
+          )
+        );
+        localStorage.setItem("linkedin_connected", "true");
+        console.log("✅ LinkedIn is connected", userName ? `as ${userName}` : "");
+        return true;
+      } else {
+        // Token is invalid or not found
+        localStorage.removeItem("linkedin_connected");
+        localStorage.removeItem("linkedin_user_name");
+        setChannels((prev) =>
+          prev.map((ch) =>
+            ch.id === "linkedin" ? { ...ch, connected: false, subtitle: "LinkedIn OAuth" } : ch
+          )
+        );
+        console.log("❌ LinkedIn token is invalid or expired");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error checking LinkedIn connection:", error);
+      setChannels((prev) =>
+        prev.map((ch) =>
+          ch.id === "linkedin" ? { ...ch, connected: false, subtitle: "LinkedIn OAuth" } : ch
+        )
+      );
+      return false;
+    }
+  };
+
+  const handleLinkedInConnect = () => {
+    const backendUrl =
+      process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
+
+    // Get userId from localStorage
+    const userStr = localStorage.getItem("user");
+    const user = userStr ? JSON.parse(userStr) : null;
+    const userId = user?.id || null;
+
+    // Always force reconnect to ensure fresh OAuth flow
+    // This ensures we always go through LinkedIn auth page
+
+    // Redirect to backend LinkedIn login endpoint with userId
+    const loginUrl = `${backendUrl}/linkedin/login${userId ? `?userId=${userId}` : ""}`;
+
+    // Use window.location.replace to ensure redirect happens
+    window.location.replace(loginUrl);
+  };
+
+  const handleFacebookConnect = () => {
+    // Store which platform is initiating OAuth
+    localStorage.setItem("oauth_platform", "facebook");
+    const state = Math.random().toString(36).substring(2);
+    const encodedRedirectUri = encodeURIComponent(redirectUri);
+    // Use Facebook OAuth for Facebook Business API (this is the standard way)
+    const authUrl = `https://www.facebook.com/${graphVersion}/dialog/oauth?client_id=${appId}&redirect_uri=${encodedRedirectUri}&scope=${facebookBusinessScopes}&response_type=code&state=${state}`;
     window.location.href = authUrl;
   };
 
@@ -363,12 +1074,19 @@ const Channels = () => {
           process.env.REACT_APP_BACKEND_URL ||
           "https://unexigent-felisha-calathiform.ngrok-free.dev";
         try {
+          const authToken = localStorage.getItem("authToken");
+          const headers = {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          };
+
+          // Add Authorization header if token exists
+          if (authToken) {
+            headers["Authorization"] = `Bearer ${authToken}`;
+          }
           await fetch(`${backendUrl}/api/instagram/tokens/${instagramUserId}`, {
             method: "DELETE",
-            headers: {
-              "Content-Type": "application/json",
-              "ngrok-skip-browser-warning": "true",
-            },
+            headers: headers,
           });
         } catch (error) {
           console.error("Error deleting Instagram tokens:", error);
@@ -378,6 +1096,67 @@ const Channels = () => {
       localStorage.removeItem("instagram_account_id");
       localStorage.removeItem("instagram_username");
       localStorage.removeItem("instagram_page_id");
+    } else if (channelId === "facebook") {
+      const facebookUserId = localStorage.getItem("facebook_user_id");
+      if (facebookUserId) {
+        // Delete tokens from backend
+
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+
+        // Add Authorization header if token exists
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+        const backendUrl =
+          process.env.REACT_APP_BACKEND_URL ||
+          "https://unexigent-felisha-calathiform.ngrok-free.dev";
+        try {
+          await fetch(`${backendUrl}/api/facebook/tokens/${facebookUserId}`, {
+            method: "DELETE",
+            headers: headers,
+          });
+        } catch (error) {
+          console.error("Error deleting Facebook tokens:", error);
+        }
+      }
+      localStorage.removeItem("facebook_user_id");
+      localStorage.removeItem("facebook_user_name");
+      localStorage.removeItem("facebook_page_id");
+      localStorage.removeItem("facebook_page_name");
+      localStorage.removeItem("facebook_token_type");
+      localStorage.removeItem("facebook_token_expiry");
+      localStorage.removeItem("facebook_user_access_token");
+      localStorage.removeItem("facebook_page_access_token");
+    } else if (channelId === "linkedin") {
+      // Delete token from backend file
+      const backendUrl =
+        process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
+      try {
+        // Get authToken from localStorage
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+
+        // Add Authorization header if token exists
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+
+        await fetch(`${backendUrl}/api/linkedin/token`, {
+          method: "DELETE",
+          headers: headers,
+        });
+      } catch (error) {
+        console.error("Error deleting LinkedIn token:", error);
+      }
+      localStorage.removeItem("linkedin_connected");
+      localStorage.removeItem("linkedin_user_name");
     }
     setChannels((prev) =>
       prev.map((ch) => (ch.id === channelId ? { ...ch, connected: false } : ch))
@@ -388,7 +1167,57 @@ const Channels = () => {
   const handleSync = async (channelId) => {
     const backendUrl =
       process.env.REACT_APP_BACKEND_URL || "https://unexigent-felisha-calathiform.ngrok-free.dev";
-    if (channelId === "whatsapp") {
+    if (channelId === "linkedin") {
+      // Check LinkedIn connection status
+      toast.loading("Checking LinkedIn connection...");
+      try {
+        // Get authToken from localStorage
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+
+        // Add Authorization header if token exists
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+
+        const linkedInResponse = await fetch(`${backendUrl}/api/linkedin/token`, {
+          method: "GET",
+          headers: headers,
+        });
+
+        // Check for 401 Unauthorized
+        if (linkedInResponse.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting LinkedIn...");
+          await handleDisconnect(channelId);
+          return;
+        }
+
+        const isConnected = await checkLinkedInConnection();
+        toast.dismiss();
+        if (isConnected) {
+          toast.success("LinkedIn is connected!");
+          // Update lastSync date
+          const currentDate = new Date();
+          const formattedDate = `${
+            currentDate.getMonth() + 1
+          }/${currentDate.getDate()}/${currentDate.getFullYear()}`;
+          setChannels((prev) =>
+            prev.map((ch) => (ch.id === channelId ? { ...ch, lastSync: formattedDate } : ch))
+          );
+        } else {
+          toast.error("LinkedIn is not connected. Please connect your LinkedIn account.");
+        }
+      } catch (error) {
+        console.error("Error checking LinkedIn connection:", error);
+        toast.dismiss();
+        toast.error("Failed to check LinkedIn connection. Please try again.");
+      }
+      return;
+    } else if (channelId === "whatsapp") {
       // Get stored token from localStorage
       const storedToken = localStorage.getItem("whatsapp_token");
 
@@ -409,6 +1238,14 @@ const Channels = () => {
           },
           body: JSON.stringify({ token: storedToken }),
         });
+
+        // Check for 401 Unauthorized
+        if (response.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting WhatsApp...");
+          await handleDisconnect(channelId);
+          return;
+        }
 
         const data = await response.json();
 
@@ -443,26 +1280,69 @@ const Channels = () => {
         setShowWhatsAppModal(true);
         toast.error("Failed to verify token. Please check your connection and try again.");
       }
-    } else {
+    } else if (channelId === "instagram") {
       const instagramUserId = localStorage.getItem("instagram_user_id");
       if (!instagramUserId) {
         toast.error("Instagram token not found. Please connect your Instagram account again.");
         return;
       }
 
-      // Get user access token from backend
+      // Get user access token from backend using logged-in user's integrations
       toast.loading("Syncing Instagram...");
       try {
+        // Get authToken from localStorage
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+
+        // Add Authorization header if token exists
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+
+        // First, get all integrations to find Instagram platformUserId
+        const integrationsResponse = await fetch(`${backendUrl}/api/integrations`, {
+          method: "GET",
+          headers: headers,
+        });
+
+        if (!integrationsResponse.ok) {
+          toast.error("Failed to get Instagram connection. Please reconnect your account.");
+          return;
+        }
+
+        const integrationsData = await integrationsResponse.json();
+        const instagramIntegration = integrationsData.integrations?.instagram;
+
+        if (
+          !instagramIntegration ||
+          !instagramIntegration.connected ||
+          instagramIntegration.tokenExpired
+        ) {
+          toast.error("Instagram not connected or token expired. Please reconnect your account.");
+          return;
+        }
+
+        // Use the platformUserId from the integration
+        const instagramPlatformUserId = instagramIntegration.platformUserId;
+
         const tokenResponse = await fetch(
-          `${backendUrl}/api/instagram/tokens/user/${instagramUserId}`,
+          `${backendUrl}/api/instagram/tokens/user/${instagramPlatformUserId}`,
           {
             method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              "ngrok-skip-browser-warning": "true",
-            },
+            headers: headers,
           }
         );
+
+        // Check for 401 Unauthorized
+        if (tokenResponse.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting Instagram...");
+          await handleDisconnect(channelId);
+          return;
+        }
 
         const tokenData = await tokenResponse.json();
         if (!tokenResponse.ok || !tokenData.success || tokenData.isExpired) {
@@ -480,6 +1360,15 @@ const Channels = () => {
           },
           body: JSON.stringify({ token: tokenData.token }),
         });
+
+        // Check for 401 Unauthorized
+        if (response.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting Instagram...");
+          await handleDisconnect(channelId);
+          return;
+        }
+
         const data = await response.json();
         if (response.ok && data.success && data.accountInfo) {
           toast.dismiss();
@@ -492,6 +1381,94 @@ const Channels = () => {
         console.error("Error syncing Instagram:", error);
         toast.dismiss();
         toast.error("Failed to sync Instagram. Please check your connection and try again.");
+      }
+    } else if (channelId === "facebook") {
+      const facebookUserId = localStorage.getItem("facebook_user_id");
+      if (!facebookUserId) {
+        toast.error("Facebook token not found. Please connect your Facebook account again.");
+        return;
+      }
+
+      // Get long-lived token from backend
+      toast.loading("Syncing Facebook...");
+      try {
+        const tokenResponse = await fetch(`${backendUrl}/api/facebook/tokens/${facebookUserId}`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
+        });
+
+        // Check for 401 Unauthorized
+        if (tokenResponse.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting Facebook...");
+          await handleDisconnect(channelId);
+          return;
+        }
+
+        const tokenData = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenData.success || tokenData.isExpired) {
+          toast.error(
+            "Facebook token expired or not found. Please connect your Facebook account again."
+          );
+          return;
+        }
+
+        const response = await fetch(`${backendUrl}/api/verify-facebook-token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
+          body: JSON.stringify({ token: tokenData.token }),
+        });
+
+        // Check for 401 Unauthorized
+        if (response.status === 401) {
+          toast.dismiss();
+          toast.error("Unauthorized access. Disconnecting Facebook...");
+          await handleDisconnect(channelId);
+          return;
+        }
+
+        const data = await response.json();
+        if (response.ok && data.success && data.accountInfo) {
+          // Update subtitle with user name if available
+          if (data.accountInfo.facebook_user_name) {
+            localStorage.setItem("facebook_user_name", data.accountInfo.facebook_user_name);
+            setChannels((prev) =>
+              prev.map((ch) =>
+                ch.id === "facebook"
+                  ? {
+                      ...ch,
+                      subtitle: `Connected as ${data.accountInfo.facebook_user_name}`,
+                    }
+                  : ch
+              )
+            );
+          }
+
+          // Update lastSync date
+          const currentDate = new Date();
+          const formattedDate = `${
+            currentDate.getMonth() + 1
+          }/${currentDate.getDate()}/${currentDate.getFullYear()}`;
+          setChannels((prev) =>
+            prev.map((ch) => (ch.id === channelId ? { ...ch, lastSync: formattedDate } : ch))
+          );
+
+          toast.dismiss();
+          toast.success("Facebook sync completed successfully!");
+        } else {
+          toast.dismiss();
+          toast.error("Failed to sync Facebook. Please try again.");
+        }
+      } catch (error) {
+        console.error("Error syncing Facebook:", error);
+        toast.dismiss();
+        toast.error("Failed to sync Facebook. Please check your connection and try again.");
       }
     }
   };

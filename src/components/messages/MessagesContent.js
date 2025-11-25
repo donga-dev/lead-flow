@@ -3,9 +3,11 @@ import {
   CircleX,
   FileUser,
   Instagram,
+  Facebook,
   Mic,
   NotebookPen,
   Paperclip,
+  RefreshCw,
   Send,
   Smile,
 } from "lucide-react";
@@ -34,6 +36,8 @@ const MessagesContent = ({
   getMessageAvatar,
   handleSend,
   handleSuggestedReply,
+  onRefreshInstagramMessages,
+  onRefreshFacebookMessages,
 }) => {
   const suggestedReplies = [
     "Hi there! How can I help you today?",
@@ -48,6 +52,8 @@ const MessagesContent = ({
             className={`w-10 h-10 rounded-full text-white flex items-center justify-center font-semibold text-base flex-shrink-0 ${
               selectedContact.platform === "instagram"
                 ? "bg-gradient-to-br from-pink-500 to-purple-500"
+                : selectedContact.platform === "facebook"
+                ? "bg-gradient-to-br from-blue-500 to-blue-600"
                 : "bg-gradient-to-br from-purple-500 to-indigo-500"
             }`}
           >
@@ -64,6 +70,8 @@ const MessagesContent = ({
             <div className="text-xs text-slate-400 flex items-center gap-1">
               {selectedContact.platform === "instagram" ? (
                 <Instagram className="w-3.5 h-3.5 text-pink-500" />
+              ) : selectedContact.platform === "facebook" ? (
+                <Facebook className="w-3.5 h-3.5 text-blue-500" />
               ) : (
                 <svg
                   width="14"
@@ -82,6 +90,28 @@ const MessagesContent = ({
           </div>
         </div>
         <div className="flex gap-2 items-center">
+          {selectedContact?.platform === "instagram" && (
+            <button
+              onClick={onRefreshInstagramMessages}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh Instagram Messages"
+            >
+              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          )}
+          {selectedContact?.platform === "facebook" && (
+            <button
+              onClick={onRefreshFacebookMessages}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh Facebook Messages"
+            >
+              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          )}
           <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
             <FileUser className="w-5 h-5" />
             Go to Lead
@@ -269,7 +299,8 @@ const MessagesContent = ({
             }}
             disabled={
               sending ||
-              (messageType === "text" && (!newMessage || (typeof newMessage === "string" && !newMessage.trim()))) ||
+              (messageType === "text" &&
+                (!newMessage || (typeof newMessage === "string" && !newMessage.trim()))) ||
               (messageType === "template" && !templateName)
             }
             type="button"

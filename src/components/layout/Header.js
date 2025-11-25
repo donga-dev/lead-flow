@@ -1,5 +1,5 @@
-import { Bell, Menu, Sun, User, Search } from "lucide-react";
 import React from "react";
+import { Bell, Menu, Sun, User, Search } from "lucide-react";
 
 const Header = ({ onMenuClick }) => {
   return (
@@ -33,10 +33,13 @@ const Header = ({ onMenuClick }) => {
               <Bell />
               <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-slate-800"></span>
             </button>
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all relative bg-gradient-to-br from-purple-500 to-indigo-500 text-gray-400 hover:text-white">
+            <div className="flex items-center relative">
+              <button
+                className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all relative bg-gradient-to-br from-purple-500 to-indigo-500 text-gray-400 hover:text-white"
+                aria-label="User menu"
+              >
                 <User className="w-4 h-4" />
-              </div>
+              </button>
             </div>
           </div>
         </div>

@@ -7,6 +7,10 @@ import Header from "./components/layout/Header";
 import Sidebar from "./components/layout/Sidebar";
 import Messages from "./components/messages/Messages";
 import Channels from "./components/channels/Channels";
+import Analytics from "./components/analytics/Analytics";
+import Auth from "./components/auth/Auth";
+import PrivateRoute from "./components/common/PrivateRoute";
+import PublicRoute from "./components/common/PublicRoute";
 import { SocketProvider } from "./contexts/SocketContext";
 
 // Coming Soon Component
@@ -80,7 +84,7 @@ const AppLayout = () => {
               />
               <Route
                 path="/analytics"
-                element={<ComingSoon />}
+                element={<Analytics />}
               />
               <Route
                 path="/reports"
@@ -103,18 +107,6 @@ const AppLayout = () => {
           </div>
         </main>
       </div>
-      <ToastContainer
-        position="top-right"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="dark"
-      />
     </div>
   );
 };
@@ -123,7 +115,47 @@ function App() {
   return (
     <SocketProvider>
       <BrowserRouter>
-        <AppLayout />
+        <Routes>
+          {/* Public Auth Routes - Redirect if authenticated */}
+          <Route
+            path="/login"
+            element={
+              <PublicRoute>
+                <Auth />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/register"
+            element={
+              <PublicRoute>
+                <Auth />
+              </PublicRoute>
+            }
+          />
+
+          {/* Protected Routes - Require authentication */}
+          <Route
+            path="/*"
+            element={
+              <PrivateRoute>
+                <AppLayout />
+              </PrivateRoute>
+            }
+          />
+        </Routes>
+        <ToastContainer
+          position="top-right"
+          autoClose={3000}
+          hideProgressBar={false}
+          newestOnTop={false}
+          closeOnClick
+          rtl={false}
+          pauseOnFocusLoss
+          draggable
+          pauseOnHover
+          theme="dark"
+        />
       </BrowserRouter>
     </SocketProvider>
   );

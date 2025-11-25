@@ -11,10 +11,12 @@ import {
   X,
 } from "lucide-react";
 import React from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 
 const Sidebar = ({ isOpen, onClose }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const navItems = [
     {
       path: "/dashboard",
@@ -63,6 +65,14 @@ const Sidebar = ({ isOpen, onClose }) => {
       return location.pathname.startsWith("/messages");
     }
     return location.pathname === path;
+  };
+
+  const handleLogout = () => {
+    // Clear authentication data
+    localStorage.clear();
+
+    toast.success("Logged out successfully");
+    navigate("/login");
   };
 
   return (
@@ -170,7 +180,10 @@ const Sidebar = ({ isOpen, onClose }) => {
 
         {/* Logout Button */}
         <div className="px-6 py-4 border-t border-slate-700">
-          <button className="flex items-center gap-3 w-full px-6 py-3 border-none cursor-pointer text-sm font-medium transition-all text-left text-red-500 bg-transparent hover:bg-gray-700 rounded-lg transition-colors">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full px-6 py-3 border-none cursor-pointer text-sm font-medium transition-all text-left text-red-500 bg-transparent hover:bg-gray-700 rounded-lg transition-colors"
+          >
             <LogOut className="w-5 h-5" />
             <span className="text-base font-normal">Logout</span>
           </button>

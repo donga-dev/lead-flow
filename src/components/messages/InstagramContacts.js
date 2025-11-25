@@ -1,5 +1,11 @@
 // Instagram Contacts Component
-const InstagramContacts = ({ conversations, loading, onSelectContact, selectedContact }) => {
+const InstagramContacts = ({
+  conversations,
+  loading,
+  onSelectContact,
+  selectedContact,
+  instagramUserId,
+}) => {
   const formatTime = (timestamp) => {
     if (!timestamp) return "";
     const date = new Date(timestamp);
@@ -27,8 +33,9 @@ const InstagramContacts = ({ conversations, loading, onSelectContact, selectedCo
       </div>
     );
   }
-
-  if (conversations.length === 0) {
+  // Note: We can show stored conversations even without instagramUserId
+  // since they come from webhook messages, not API connections
+  if (conversations.length === 0 && instagramUserId) {
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <div className="text-center text-slate-400 py-8">
@@ -39,55 +46,82 @@ const InstagramContacts = ({ conversations, loading, onSelectContact, selectedCo
     );
   }
 
+  if (!instagramUserId) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="text-center text-slate-400 py-8">
+          <p className="mb-2">
+            Instagram not connected. Please Connect to Instagram from the Channels page to see
+            contacts
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div>
         {conversations.map((conversation) => {
-          const participant = conversation.participants?.data?.[0];
-          const contactName =
-            participant?.name || participant?.username || participant?.id || conversation.id;
-          const isSelected = selectedContact?.id === conversation.id;
-          // Get last message from conversation.messages.data if available
-          const lastMessage = conversation.messages?.data?.[0];
-          const lastMessageTime = lastMessage?.created_time
-            ? new Date(lastMessage.created_time).getTime()
-            : conversation.updated_time
-            ? new Date(conversation.updated_time).getTime()
-            : null;
+          // Check if this is a stored conversation (from stored messages API)
+          const isStoredConversation = conversation.source === "stored";
+
+          let contactName;
+          let contactUserId;
+
+          if (isStoredConversation) {
+            // For stored conversations, use data from API response
+            contactName = conversation.name;
+            contactUserId = conversation.userId;
+          }
+
+          const isSelected =
+            selectedContact?.id === conversation.id ||
+            selectedContact?.userId === contactUserId ||
+            selectedContact?.conversationId === conversation.conversationId;
 
           return (
             <div
-              key={conversation.id}
-              onClick={() =>
-                onSelectContact({
-                  id: conversation.id,
+              key={conversation.id || conversation.userId}
+              onClick={() => {
+                const contactData = {
+                  id: conversation.id || conversation.userId,
                   name: contactName,
-                  conversationId: conversation.id,
+                  conversationId:
+                    conversation.conversationId || conversation.id || conversation.userId,
+                  userId: contactUserId || conversation.userId, // Use userId for stored messages API
                   platform: "instagram",
-                })
-              }
+                };
+
+                // Add source property for stored conversations
+                if (isStoredConversation) {
+                  contactData.source = "stored";
+                }
+
+                onSelectContact(contactData);
+              }}
               className={`p-3 mb-1 cursor-pointer transition-colors ${
                 isSelected ? "bg-blue-500/20 border-l-4 border-blue-500" : "hover:bg-slate-700"
               }`}
             >
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 text-white flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                  {getInitials(contactName)}
+                  {getInitials(conversation?.name)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <div className="font-semibold text-sm text-slate-100 truncate">
-                      {contactName}
+                      {conversation?.name}
                     </div>
-                    {lastMessageTime && (
+                    {conversation.lastMessageTime && (
                       <div className="text-xs text-slate-400 ml-2 flex-shrink-0">
-                        {formatTime(lastMessageTime)}
+                        {formatTime(conversation.lastMessageTime)}
                       </div>
                     )}
                   </div>
-                  {lastMessage && (
+                  {conversation.lastMessage && (
                     <div className="text-xs text-slate-400 truncate">
-                      {lastMessage.message || lastMessage.id ? "Message" : "No messages"}
+                      {conversation.lastMessage || "No messages"}
                     </div>
                   )}
                 </div>
