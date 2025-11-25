@@ -4051,7 +4051,7 @@ app.get("/linkedin/callback", async (req, res) => {
 });
 
 // Handle OPTIONS preflight for LinkedIn token endpoint (handles all HTTP methods)
-app.options("/api/linkedin/token", (req, res) => {
+app.options("/api/linkedin/token", optionalAuthenticate, (req, res) => {
   setCorsHeaders(res);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours

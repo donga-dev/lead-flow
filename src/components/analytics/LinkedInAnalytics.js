@@ -117,7 +117,6 @@ const LinkedInAnalytics = () => {
 
   // Check connection status from integrations API
   useEffect(() => {
-    
     const checkConnection = async () => {
       try {
         const authToken = localStorage.getItem("authToken");
@@ -227,13 +226,18 @@ const LinkedInAnalytics = () => {
     setLoadingCampaigns(true);
     setError(null);
     try {
+      const authToken = localStorage.getItem("authToken");
+      const headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      };
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
       const response = await fetch(
         `${backendUrl}/api/linkedin/ad-accounts/${selectedAccount}/campaigns?type=SPONSORED_UPDATES&status=ACTIVE,DRAFT`,
         {
-          headers: {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
-          },
+          headers: headers,
         }
       );
 
@@ -297,11 +301,18 @@ const LinkedInAnalytics = () => {
         pivot: "ACCOUNT",
       });
 
+      const authToken = localStorage.getItem("authToken");
+      const headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      };
+
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch(`${backendUrl}/api/linkedin/ad-analytics?${params.toString()}`, {
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "true",
-        },
+        headers: headers,
       });
 
       if (response.ok) {
@@ -354,14 +365,19 @@ const LinkedInAnalytics = () => {
         const params = new URLSearchParams({
           organizationalEntity: orgId,
         });
+        const authToken = localStorage.getItem("authToken");
+        const headers = {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        };
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
 
         const response = await fetch(
           `${backendUrl}/api/linkedin/organizational-entity-share-statistics?${params.toString()}`,
           {
-            headers: {
-              "Content-Type": "application/json",
-              "ngrok-skip-browser-warning": "true",
-            },
+            headers: headers,
           }
         );
 
