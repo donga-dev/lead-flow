@@ -1,4 +1,7 @@
 // Instagram Contacts Component
+import React, { useState } from "react";
+import { Search } from "lucide-react";
+
 const InstagramContacts = ({
   conversations,
   loading,
@@ -6,6 +9,7 @@ const InstagramContacts = ({
   selectedContact,
   instagramUserId,
 }) => {
+  const [searchTerm, setSearchTerm] = useState("");
   const formatTime = (timestamp) => {
     if (!timestamp) return "";
     const date = new Date(timestamp);
@@ -59,10 +63,37 @@ const InstagramContacts = ({
     );
   }
 
+  // Filter conversations based on search term (by name)
+  const filteredConversations = conversations.filter((conversation) => {
+    if (!searchTerm) return true;
+    const name = conversation?.name || "";
+    return name.toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div>
-        {conversations.map((conversation) => {
+    <div className="flex flex-col h-full">
+      {/* Search Bar */}
+      <div className="px-4 py-3 border-b border-slate-700">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-slate-700 border border-slate-600 text-slate-100 rounded-lg px-4 pl-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto">
+        {filteredConversations.length === 0 && searchTerm ? (
+          <div className="p-10 text-center text-slate-400">
+            <p className="m-0 mb-2 text-base text-slate-100">No contacts found</p>
+            <small className="text-sm">Try a different search term</small>
+          </div>
+        ) : (
+          filteredConversations.map((conversation) => {
           // Check if this is a stored conversation (from stored messages API)
           const isStoredConversation = conversation.source === "stored";
 
@@ -128,7 +159,7 @@ const InstagramContacts = ({
               </div>
             </div>
           );
-        })}
+        }))}
       </div>
     </div>
   );

@@ -316,22 +316,28 @@ class WhatsAppAPI {
                   });
                 });
               }
+              // Cache successful result for 2 seconds to prevent rapid duplicate requests
+              // Store the result (not the promise) so subsequent calls get cached data
+              setTimeout(() => {
+                this.requestCache.delete(cacheKey);
+              }, 2000);
+              return contacts;
             } else {
               const errorText = await response.text();
               console.error(
                 `Failed to fetch contacts: ${response.status} ${response.statusText}`,
                 errorText
               );
+              // Remove from cache on error so retry can happen
+              this.requestCache.delete(cacheKey);
               throw new Error(`API returned ${response.status}: ${response.statusText}`);
             }
-            return contacts;
           } catch (error) {
             console.error("Error fetching contacts from backend:", error);
+            // Remove from cache on error so retry can happen
+            this.requestCache.delete(cacheKey);
             // Don't throw - return empty array to prevent breaking the app
             return [];
-          } finally {
-            // Remove from cache after completion
-            this.requestCache.delete(cacheKey);
           }
         })();
 
@@ -340,6 +346,17 @@ class WhatsAppAPI {
 
         // Wait for the request and get the result
         apiContacts = await requestPromise;
+
+        // After getting result, replace promise with actual data for short-term caching
+        if (apiContacts && apiContacts.length >= 0) {
+          this.requestCache.set(cacheKey, apiContacts);
+        }
+      } else {
+        // If we have cached data (not a promise), use it directly
+        const cached = this.requestCache.get(cacheKey);
+        if (!(cached instanceof Promise)) {
+          apiContacts = cached;
+        }
       }
 
       // Add API contacts to the map
@@ -424,31 +441,31 @@ class WhatsAppAPI {
       });
 
       // 2. Get recipients we have sent messages to
-      const storedRecipients = this.getStoredRecipients();
-      storedRecipients.forEach((recipient) => {
-        const normalized = recipient.phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
-        if (contactsMap.has(normalized)) {
-          // Update existing contact (user has both sent and received messages)
-          const existing = contactsMap.get(normalized);
-          existing.messageDirection = "both";
-          existing.hasMessages = true;
-          // Keep the most recent timestamp
-          if (recipient.timestamp > (existing.timestamp || 0)) {
-            existing.timestamp = recipient.timestamp;
-          }
-        } else {
-          // Add new recipient (we sent messages to them)
-          contactsMap.set(normalized, {
-            phoneNumber: normalized,
-            name: recipient.name || normalized,
-            hasMessages: true,
-            lastMessage: recipient.lastMessage || "",
-            timestamp: recipient.timestamp || Date.now(),
-            isRegistered: recipient.isRegistered || false,
-            messageDirection: "outgoing", // We messaged them
-          });
-        }
-      });
+      // const storedRecipients = this.getStoredRecipients();
+      // storedRecipients.forEach((recipient) => {
+      //   const normalized = recipient.phoneNumber.replace(/\s/g, "").replace(/^\+?/, "+");
+      //   if (contactsMap.has(normalized)) {
+      //     // Update existing contact (user has both sent and received messages)
+      //     const existing = contactsMap.get(normalized);
+      //     existing.messageDirection = "both";
+      //     existing.hasMessages = true;
+      //     // Keep the most recent timestamp
+      //     if (recipient.timestamp > (existing.timestamp || 0)) {
+      //       existing.timestamp = recipient.timestamp;
+      //     }
+      //   } else {
+      //     // Add new recipient (we sent messages to them)
+      //     contactsMap.set(normalized, {
+      //       phoneNumber: normalized,
+      //       name: recipient.name || normalized,
+      //       hasMessages: true,
+      //       lastMessage: recipient.lastMessage || "",
+      //       timestamp: recipient.timestamp || Date.now(),
+      //       isRegistered: recipient.isRegistered || false,
+      //       messageDirection: "outgoing", // We messaged them
+      //     });
+      //   }
+      // });
 
       // Convert map to array and sort by timestamp (most recent first)
       const contacts = Array.from(contactsMap.values());

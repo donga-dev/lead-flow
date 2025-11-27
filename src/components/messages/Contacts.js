@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Filter, Plus } from "lucide-react";
+import { Filter, Plus, Search } from "lucide-react";
 import whatsappAPI from "../../services/whatsapp.api";
 import { useSocket } from "../../contexts/SocketContext";
 import { getUnreadCount } from "../../utils/readMessages.utils";
@@ -208,14 +208,23 @@ const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onCont
     if (!token) return;
     if (!socket) return;
 
-    const handleContactUpdate = async () => {
-      try {
-        // Add a small delay to prevent rapid API calls
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        await loadContacts();
-      } catch (error) {
-        console.error("Error in handleContactUpdate:", error);
+    // Debounce timer to prevent rapid duplicate calls
+    let debounceTimer = null;
+
+    const handleContactUpdate = () => {
+      // Clear any pending debounce timer
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
       }
+
+      // Add a delay to prevent rapid API calls and wait for any ongoing requests
+      debounceTimer = setTimeout(async () => {
+        try {
+          await loadContacts();
+        } catch (error) {
+          console.error("Error in handleContactUpdate:", error);
+        }
+      }, 500); // Increased delay to 500ms to prevent duplicate requests
     };
 
     const handleNewMessage = async (data) => {
@@ -256,6 +265,10 @@ const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onCont
     socket.on("messages_read", handleMessagesRead);
 
     return () => {
+      // Clear debounce timer on cleanup
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
       socket.off("contact_update", handleContactUpdate);
       socket.off("new_message", handleNewMessage);
       socket.off("messages_read", handleMessagesRead);
@@ -328,6 +341,20 @@ const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onCont
         </div>
       </div>
 
+      {/* Search Bar */}
+      <div className="px-4 py-3 border-b border-slate-700">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by name or number..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-slate-700 border border-slate-600 text-slate-100 rounded-lg px-4 pl-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+
       {error && (
         <div className="p-4 bg-red-950 border-l-4 border-red-500 m-4 rounded text-red-200">
           <p className="m-0 mb-2 font-medium">{error}</p>
@@ -376,7 +403,7 @@ const Contacts = ({ onSelectContact, selectedContact, setSelectedContact, onCont
                 }`}
                 onClick={() => {
                   if (onSelectContact) {
-                    onSelectContact(contact);
+                    onSelectContact({ ...contact, platform: "whatsapp" });
                   }
                   // Immediately update unread count to 0 when clicked
                   const normalizedPhone = contact.phoneNumber

@@ -8,10 +8,12 @@ import {
   NotebookPen,
   Paperclip,
   RefreshCw,
+  Search,
   Send,
   Smile,
+  X,
 } from "lucide-react";
-import React from "react";
+import React, { useState, useMemo } from "react";
 
 const MessagesContent = ({
   selectedContact,
@@ -39,95 +41,156 @@ const MessagesContent = ({
   onRefreshInstagramMessages,
   onRefreshFacebookMessages,
 }) => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+
   const suggestedReplies = [
     "Hi there! How can I help you today?",
     "Hi! I'm here to answer your questions and help you find what you need.",
   ];
 
+  // Filter messages based on search term
+  const filteredMessages = useMemo(() => {
+    if (!searchTerm) return messages;
+
+    const searchLower = searchTerm.toLowerCase();
+    return messages.filter((message) => {
+      // Search in message text
+      const messageText = message.text?.body || message.message || "";
+      if (messageText.toLowerCase().includes(searchLower)) {
+        return true;
+      }
+
+      // For WhatsApp: search by contact name and phone number
+      if (selectedContact?.platform === "whatsapp" || !selectedContact?.platform) {
+        const contactName = selectedContact?.name || "";
+        const phoneNumber = selectedContact?.phoneNumber || "";
+        if (contactName.toLowerCase().includes(searchLower) || phoneNumber.includes(searchTerm)) {
+          return true;
+        }
+      }
+
+      // For Instagram and Facebook: search by from name
+      if (selectedContact?.platform === "instagram" || selectedContact?.platform === "facebook") {
+        // For incoming messages, check if from name matches
+        if (message.direction === "incoming") {
+          const fromName = selectedContact?.name || selectedContact?.username || "";
+          if (fromName.toLowerCase().includes(searchLower)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    });
+  }, [messages, searchTerm, selectedContact]);
+
   return (
     <div className="flex flex-col h-full bg-slate-900 bg-[url('data:image/svg+xml,%3Csvg width=\\'60\\' height=\\'60\\' viewBox=\\'0 0 60 60\\' xmlns=\\'http://www.w3.org/2000/svg\\'%3E%3Cg fill=\\'none\\' fill-rule=\\'evenodd\\'%3E%3Cg fill=\\'%23d4d4d4\\' fill-opacity=\\'0.03\\'%3E%3Cpath d=\\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')]">
-      <div className="bg-slate-800 border-b border-slate-700 px-5 py-4 z-10 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <div
-            className={`w-10 h-10 rounded-full text-white flex items-center justify-center font-semibold text-base flex-shrink-0 ${
-              selectedContact.platform === "instagram"
-                ? "bg-gradient-to-br from-pink-500 to-purple-500"
-                : selectedContact.platform === "facebook"
-                ? "bg-gradient-to-br from-blue-500 to-blue-600"
-                : "bg-gradient-to-br from-purple-500 to-indigo-500"
-            }`}
-          >
-            {selectedContact.name?.charAt(0).toUpperCase() ||
-              selectedContact.phoneNumber?.charAt(1) ||
-              "?"}
-          </div>
-          <div>
-            <div className="font-semibold text-base text-slate-100 mb-0.5">
-              {selectedContact.name ||
-                selectedContact.username ||
-                formatPhoneNumber(selectedContact.phoneNumber)}
-            </div>
-            <div className="text-xs text-slate-400 flex items-center gap-1">
-              {selectedContact.platform === "instagram" ? (
-                <Instagram className="w-3.5 h-3.5 text-pink-500" />
-              ) : selectedContact.platform === "facebook" ? (
-                <Facebook className="w-3.5 h-3.5 text-blue-500" />
-              ) : (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.77.966-.944 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
-                    fill="#25D366"
-                  />
-                </svg>
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-2 items-center">
-          {selectedContact?.platform === "instagram" && (
-            <button
-              onClick={onRefreshInstagramMessages}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh Instagram Messages"
+      <div className="bg-slate-800 border-b border-slate-700 px-5 py-4 z-10 flex flex-col gap-3">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-full text-white flex items-center justify-center font-semibold text-base flex-shrink-0 ${
+                selectedContact.platform === "instagram"
+                  ? "bg-gradient-to-br from-pink-500 to-purple-500"
+                  : selectedContact.platform === "facebook"
+                  ? "bg-gradient-to-br from-blue-500 to-blue-600"
+                  : "bg-gradient-to-br from-purple-500 to-indigo-500"
+              }`}
             >
-              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
+              {selectedContact.name?.charAt(0).toUpperCase() ||
+                selectedContact.phoneNumber?.charAt(1) ||
+                "?"}
+            </div>
+            <div>
+              <div className="font-semibold text-base text-slate-100 mb-0.5">
+                {selectedContact.name ||
+                  selectedContact.username ||
+                  formatPhoneNumber(selectedContact.phoneNumber)}
+              </div>
+              <div className="text-xs text-slate-400 flex items-center gap-1">
+                {selectedContact.platform === "instagram" ? (
+                  <Instagram className="w-3.5 h-3.5 text-pink-500" />
+                ) : selectedContact.platform === "facebook" ? (
+                  <Facebook className="w-3.5 h-3.5 text-blue-500" />
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.77.966-.944 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
+                      fill="#25D366"
+                    />
+                  </svg>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 items-center">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search messages..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 text-slate-100 rounded-lg px-4 pl-10 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <button
+                onClick={() => {
+                  setSearchTerm("");
+                  setShowSearch(false);
+                }}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {selectedContact?.platform === "instagram" && (
+              <button
+                onClick={onRefreshInstagramMessages}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh Instagram Messages"
+              >
+                <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            )}
+            {selectedContact?.platform === "facebook" && (
+              <button
+                onClick={onRefreshFacebookMessages}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh Facebook Messages"
+              >
+                <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            )}
+            <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
+              <FileUser className="w-5 h-5" />
+              Go to Lead
             </button>
-          )}
-          {selectedContact?.platform === "facebook" && (
-            <button
-              onClick={onRefreshFacebookMessages}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6] disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh Facebook Messages"
-            >
-              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
+            <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
+              <NotebookPen className="w-5 h-5" />
+              Note
             </button>
-          )}
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
-            <FileUser className="w-5 h-5" />
-            Go to Lead
-          </button>
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
-            <NotebookPen className="w-5 h-5" />
-            Note
-          </button>
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
-            <Bell className="w-5 h-5" />
-            Snooze
-          </button>
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-red-500">
-            <CircleX className="w-5 h-5" />
-            Close
-          </button>
+            <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-[#2b82f6]">
+              <Bell className="w-5 h-5" />
+              Snooze
+            </button>
+            <button className="flex items-center gap-1.5 px-3 py-2 bg-transparent rounded-md text-base cursor-pointer transition-all hover:bg-slate-700 text-red-500">
+              <CircleX className="w-5 h-5" />
+              Close
+            </button>
+          </div>
         </div>
       </div>
 
@@ -139,19 +202,25 @@ const MessagesContent = ({
           </div>
         )}
 
-        {messages.length === 0 && !loading ? (
+        {filteredMessages.length === 0 && !loading ? (
           <div className="text-center text-slate-400">
-            <p className="m-0 mb-1 text-base text-slate-100">No messages yet</p>
-            <small className="text-sm">Start the conversation by sending a message</small>
+            <p className="m-0 mb-1 text-base text-slate-100">
+              {searchTerm ? "No messages found" : "No messages yet"}
+            </p>
+            <small className="text-sm">
+              {searchTerm
+                ? "Try a different search term"
+                : "Start the conversation by sending a message"}
+            </small>
           </div>
         ) : (
-          messages.map((message, index) => {
+          filteredMessages.map((message, index) => {
             const avatarInitials = getMessageAvatar(message);
 
             // Check if this is the first message of a new day
             const messageDay = formatDate(message.timestamp);
             const isNewDay =
-              index === 0 || messageDay !== formatDate(messages[index - 1]?.timestamp);
+              index === 0 || messageDay !== formatDate(filteredMessages[index - 1]?.timestamp);
 
             return (
               <React.Fragment key={message.id || `msg-${index}-${message.timestamp}`}>
@@ -230,20 +299,21 @@ const MessagesContent = ({
             );
           })
         )}
-        {selectedContact && selectedContact.platform === "whatsapp" && (
-          <div className=" flex gap-2 flex-wrap justify-end">
-            {suggestedReplies.map((reply, index) => (
-              <button
-                key={index}
-                onClick={() => handleSuggestedReply(reply)}
-                disabled={sending}
-                className="px-4 py-1 text-sm border border-purple-400 text-purple-400 rounded-full hover:bg-purple-500 hover:text-white transition"
-              >
-                {reply}
-              </button>
-            ))}
-          </div>
-        )}
+        {selectedContact &&
+          (selectedContact.platform === "whatsapp" || !selectedContact.platform) && (
+            <div className=" flex gap-2 flex-wrap justify-end">
+              {suggestedReplies.map((reply, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSuggestedReply(reply)}
+                  disabled={sending}
+                  className="px-4 py-1 text-sm border border-purple-400 text-purple-400 rounded-full hover:bg-purple-500 hover:text-white transition"
+                >
+                  {reply}
+                </button>
+              ))}
+            </div>
+          )}
         <div ref={messagesEndRef} />
       </div>
 
